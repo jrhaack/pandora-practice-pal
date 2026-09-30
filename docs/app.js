@@ -1,6 +1,6 @@
 /* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -11,7 +11,7 @@ const COURSE_VAR = { DIGI210: 'var(--digi)', ELTR238: 'var(--eltr)', MATH237: 'v
 // ------------------------------------------------------------------ storage
 function load(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } }
 function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* storage may be unavailable */ } }
-const settings = Object.assign({ rate: 1, voice: '', mic: true, optionsAloud: true, apiKey: '', model: 'claude-haiku-4-5', ghRepo: '', ghToken: '', len: 20, mode: 'lecture', course: 'FOCUS', pick: 'next' }, load('pp.settings', {}));
+const settings = Object.assign({ rate: 1, voice: '', mic: true, optionsAloud: true, apiKey: '', model: '', provider: 'gemini', baseUrl: '', ghRepo: '', ghToken: '', len: 20, mode: 'lecture', course: 'FOCUS', pick: 'next' }, load('pp.settings', {}));
 const progress = Object.assign({ v: 1, items: {}, lessons: {}, lectures: {}, topics: {}, sessions: [], updated: 0 }, load('pp.progress', {}));
 const saveSettings = () => save('pp.settings', settings);
 const saveProgress = () => { progress.updated = Date.now(); save('pp.progress', progress); };
@@ -54,8 +54,24 @@ function focusScore(course, topic) {
 const Voice = {
   voices: [], cancelled: false, speaking: false,
   init() { const pick = () => { this.voices = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang)); fillVoiceSelect(); }; pick(); speechSynthesis.onvoiceschanged = pick; },
-  voice() { return this.voices.find(v => v.voiceURI === settings.voice) || this.voices.find(v => /Google.*English/i.test(v.name)) || this.voices.find(v => /en-(CA|US)/i.test(v.lang)) || this.voices[0]; },
-  chunks(text) { return String(text).replace(/\s+/g, ' ').match(/[^.!?]+[.!?]+["”]?|[^.!?]+$/g) || [text]; },
+  rank(v) { // higher is better: neural / network voices first, then Google, then local defaults
+    let r = 0; const n = (v.name || '') + ' ' + (v.voiceURI || '');
+    if (/natural|neural|premium|enhanced|wavenet|journey|studio/i.test(n)) r += 40;
+    if (/network|-x-[a-z]{3}-network/i.test(n)) r += 30;
+    if (/google/i.test(n)) r += 20;
+    if (v.localService === false) r += 10;
+    if (/en[-_](CA|US)/i.test(v.lang)) r += 6; else if (/en[-_](GB|AU|IE|NZ)/i.test(v.lang)) r += 3;
+    if (/compact|espeak|eSpeak|local-lite|-x-[a-z]{3}-local$/i.test(n)) r -= 15;
+    return r;
+  },
+  voice() { return this.voices.find(v => v.voiceURI === settings.voice) || [...this.voices].sort((a, b) => this.rank(b) - this.rank(a))[0]; },
+  chunks(text) { // sentence groups of up to ~240 characters: fewer utterance boundaries = fewer robotic gaps
+    const sents = String(text).replace(/\s+/g, ' ').match(/[^]+?(?:[.!?]+["”]?(?=\s|$)|$)/g) || [text];
+    const out = []; let cur = '';
+    for (const se of sents) { if (cur && (cur + se).length > 240) { out.push(cur.trim()); cur = ''; } cur += se.trim() + ' '; }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  },
   async say(text, opts = {}) {
     if (!('speechSynthesis' in window)) { await sleep(Math.min(8000, text.length * 40)); return true; }
     this.cancelled = false; this.speaking = true;
@@ -304,8 +320,14 @@ const Tutor = {
     if (item.type === 'number' && ev && ev.value != null && item.slips) { for (const s of item.slips) if (Math.abs(ev.value - s.value) <= Math.abs(s.value) * 0.03 + 1e-9) return s.why; }
     return typeof item.wrong === 'string' ? item.wrong : item.wrong.filter(Boolean)[0] || item.concept;
   },
-  async ask(item, isRetry = false) {
+  shuffled(item) { // returns a copy with options in random order and answer/wrong remapped
+    if (item.type !== 'choice') return item;
+    const idx = item.options.map((_, i) => i); for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    return { ...item, options: idx.map(i => item.options[i]), wrong: idx.map(i => item.wrong[i]), answer: idx.indexOf(item.answer), _orig: item };
+  },
+  async ask(item0, isRetry = false) {
     Session.check();
+    const item = this.shuffled(item0);
     const kicker = courseName(item.course) + ' · ' + item.topic + (isRetry ? ' · again' : '');
     let qtext = item.q + (item.type === 'choice' && settings.optionsAloud ? ' ' + this.readOptions(item) : '') + (item.type === 'tf' ? ' True or false?' : '');
     UI.options(item);
@@ -364,6 +386,7 @@ const Tutor = {
     UI.options(null); return 'wrong';
   },
   record(item, ok, isRetry) {
+    item = item._orig || item;
     const p = progress.items[item.id] || { n: 0, ok: 0, bad: 0, streak: 0, due: 0 };
     if (!isRetry) { p.n++; ok ? p.ok++ : p.bad++; Session.asked++; if (ok) Session.right++; Session.log.push({ id: item.id, course: item.course, topic: item.topic, ok }); }
     p.streak = ok ? p.streak + 1 : 0; p.last = Date.now();
@@ -410,23 +433,72 @@ const Lecture = {
     if (!list.length) { await speak('There is no lecture available for that choice yet.'); return; }
     const first = list[0];
     await speak((first.index === 0 ? 'Lecture: ' : 'Continuing: ') + first.L.title + '. ' + courseName(first.L.course) + '. Say explain after any point to talk it through, and resume to carry on.');
+    let sinceCheck = 0;
     for (let k = 0; k < list.length; k++) {
       const s = list[k]; Session.check();
       $('sessCount').textContent = (s.index + 1) + ' / ' + s.total;
-      let r = await speakThenWindow(s.text, courseName(s.L.course) + ' · ' + s.L.title + ' · ' + s.title, 2200);
-      while (r && r.cmd) {
-        if (r.cmd === 'repeat') { r = await speakThenWindow(s.text, courseName(s.L.course) + ' · ' + s.L.title + ' · ' + s.title, 2200); continue; }
-        if (r.cmd === 'expand') { await Expand.converse({ course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, expand: s.expand }); await speak('Back to the lecture.'); r = null; break; }
-        if (r.cmd === 'status') { await speak('Point ' + (s.index + 1) + ' of ' + s.total + '.'); r = null; break; }
-        if (r.cmd === 'skip' || r.cmd === 'resume') { r = null; break; }
-        r = null;
+      const kicker = courseName(s.L.course) + ' · ' + s.L.title + ' · ' + s.title;
+      // speak the point; a button or headset press during it is picked up right after
+      let ok = await speak(s.text, kicker);
+      let cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat');
+      while (cmd) {
+        if (cmd === 'repeat') { ok = await speak(s.text, kicker); cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat'); continue; }
+        if (cmd === 'expand') { await Expand.converse({ course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, expand: s.expand }); await speak('Back to the lecture.', kicker); }
+        cmd = null;
       }
-      progress.lectures[s.key] = { seg: s.index + 1, done: s.index + 1 >= s.total, last: Date.now() }; saveProgress();
-      if (s.index + 1 >= s.total) { await speak('That is the end of ' + s.L.title + '.'); progress.lectures[s.key] = { seg: 0, done: true, last: Date.now() }; saveProgress(); }
-      // quick check questions at the end of a lecture segment that has linked items (every third segment, at most one)
-      if (s.items && s.items.length && k % 3 === 2 && byId[s.items[0]] && unlocked(byId[s.items[0]])) { await speak('Quick check.'); await Tutor.ask(byId[s.items[0]]); }
+      sinceCheck++;
+      const isLast = s.index + 1 >= s.total;
+      // quick check on what was just said: after every second point, and always at the end of a lecture
+      if (s.check && (sinceCheck >= 2 || isLast)) { sinceCheck = 0; await this.quickCheck(s, kicker); }
+      progress.lectures[s.key] = { seg: s.index + 1, done: isLast, last: Date.now() }; saveProgress();
+      if (isLast) { await speak('That is the end of ' + s.L.title + '.', kicker); progress.lectures[s.key] = { seg: 0, done: true, last: Date.now() }; saveProgress(); }
     }
-    await speak('That is your ' + (opts.len || settings.len) + ' minutes. Say explain any time, or start tutor mode for questions on this.');
+    await speak('That is your ' + (opts.len || settings.len) + ' minutes. Start tutor mode any time for more questions on this.');
+  },
+  // One spoken question about the point just made. Wrong: re-explain and move on. Right: move on.
+  async quickCheck(s, kicker) {
+    const c = s.check; const words = ['one', 'two', 'three'];
+    let options = c.options || [], answer = c.answer;
+    if (c.type === 'choice') { const idx = options.map((_, i) => i); for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; } options = idx.map(i => c.options[i]); answer = idx.indexOf(c.answer); }
+    const fake = { id: 'check:' + s.id, course: s.L.course, topic: s.topic, type: c.type, q: c.q, options, answer, right: '', wrong: c.type === 'choice' ? options.map(() => '') : '', concept: '', hint: '' };
+    const qtext = 'Quick check. ' + c.q + (c.type === 'choice' ? ' ' + options.map((o, i) => 'Option ' + words[i] + ': ' + o + '.').join(' ') : ' True or false?');
+    UI.options(fake);
+    await speak(qtext, kicker);
+    let tries = 0;
+    while (true) {
+      Session.check();
+      const r = await hear(9000);
+      if (!r) { tries++; if (tries >= 2) { await this.checkWrong(s, fake, kicker, true); return; } await speak(c.type === 'choice' ? 'Say the option number.' : 'Say true or false.', kicker); continue; }
+      if (r.cmd) {
+        const k = r.cmd;
+        if (k === 'repeat') { await speak(qtext, kicker); continue; }
+        if (k === 'expand') { await Expand.converse({ course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, expand: s.expand }); await speak(qtext, kicker); continue; }
+        if (k === 'dontknow' || k === 'hint') { await this.checkWrong(s, fake, kicker, true); return; }
+        if (k === 'skip') { UI.options(null); return; }
+        if (typeof k === 'object' && k.answer != null) { return await this.checkGrade(s, fake, k.answer === answer, { idx: k.answer }, kicker); }
+        if (typeof k === 'object' && k.tf != null) { return await this.checkGrade(s, fake, k.tf === answer, {}, kicker); }
+        if (typeof k === 'object' && k.reveal) { await this.checkWrong(s, fake, kicker, true); return; }
+        continue;
+      }
+      UI.heard(r.alts[0]);
+      const ev = Tutor.evaluate(fake, r.alts);
+      if (!ev) { tries++; if (tries >= 2) { await this.checkWrong(s, fake, kicker, true); return; } await speak('I heard ' + r.alts[0] + '. ' + (c.type === 'choice' ? 'Say option one, two or three.' : 'Say true or false.'), kicker); continue; }
+      return await this.checkGrade(s, fake, ev.ok, ev, kicker);
+    }
+  },
+  async checkGrade(s, fake, ok, ev, kicker) {
+    UI.mark(fake, ev);
+    const k = topicKey(s.L.course, s.topic); const t = progress.topics[k] || { n: 0, bad: 0 }; t.n++; if (!ok) t.bad++; t.last = Date.now(); progress.topics[k] = t;
+    Session.asked++; if (ok) Session.right++; Session.log.push({ id: 'check:' + s.id, course: s.L.course, topic: s.topic, ok, q: s.check.q }); saveProgress(); UI.count();
+    if (ok) { await speak(pickOne(['Right.', 'Correct.', 'Yes, that is it.', 'Good.']), kicker); UI.options(null); return; }
+    await this.checkWrong(s, fake, kicker, false);
+  },
+  async checkWrong(s, fake, kicker, reveal) {
+    const c = s.check;
+    UI.mark(fake, { idx: fake.answer, ok: true });
+    const ans = c.type === 'choice' ? 'The answer is ' + fake.options[fake.answer] + '.' : 'That statement is ' + (c.answer ? 'true.' : 'false.');
+    await speak((reveal ? '' : 'Not quite. ') + ans + ' Let me go over that again. ' + c.again, kicker);
+    UI.options(null);
   },
 };
 
@@ -434,8 +506,8 @@ const Lecture = {
 const Expand = {
   async converse(ctx) {
     const kicker = courseName(ctx.course) + ' · explain';
-    if (!settings.apiKey) {
-      await speak('A little more on that. ' + (ctx.expand || ctx.text) + ' To have a real back-and-forth, add an API key in settings.', kicker);
+    if (!settings.apiKey || settings.provider === 'none') {
+      await speak('A little more on that. ' + (ctx.expand || ctx.text) + ' For a real back-and-forth, add a free AI key in settings.', kicker);
       return;
     }
     const sys = `You are a spoken tutor for a first-term Electronics Engineering Technology student. Course: ${courseName(ctx.course)} (${bank.courses[ctx.course].long}). The student is DRIVING and hears you through text-to-speech, so: plain spoken English only, no symbols, no lists, no markdown, no equations in notation. Say formulas in words and name each quantity and its unit before using numbers. Keep each reply under 120 words unless asked for more. Stay within the level of the material given; if a question goes beyond it, say so briefly and answer at an introductory level. Never invent course rules or dates.
@@ -460,28 +532,51 @@ Note for going deeper: ${ctx.expand || ''}`;
     }
   },
   async ask(system, messages) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: settings.model || 'claude-haiku-4-5', max_tokens: 400, system, messages }),
-    });
-    if (!res.ok) { const t = await res.text(); throw new Error('API ' + res.status + ' ' + t.slice(0, 120)); }
-    const j = await res.json();
-    return (j.content || []).filter(c => c.type === 'text').map(c => c.text).join(' ').replace(/[*_#`>|]/g, '').trim() || 'No answer came back.';
+    const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; const model = settings.model || P.model;
+    let res, text;
+    if (settings.provider === 'anthropic') {
+      res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 400, system, messages }) });
+      if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
+      const j = await res.json(); text = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join(' ');
+    } else {
+      const url = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') + '/chat/completions' : P.url;
+      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + settings.apiKey, ...(settings.provider === 'openrouter' ? { 'HTTP-Referer': location.origin, 'X-Title': 'Pandora Practice Pal' } : {}) },
+        body: JSON.stringify({ model, max_tokens: 400, messages: [{ role: 'system', content: system }, ...messages] }) });
+      if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
+      const j = await res.json(); text = (((j.choices || [])[0] || {}).message || {}).content || '';
+    }
+    return String(text).replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim() || 'No answer came back.';
   },
+};
+const PROVIDERS = {
+  gemini: { name: 'Google Gemini (free tier)', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.5-flash', keys: 'https://aistudio.google.com/apikey' },
+  groq: { name: 'Groq (free tier)', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', keys: 'https://console.groq.com/keys' },
+  openrouter: { name: 'OpenRouter (free models)', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'google/gemma-3-27b-it:free', keys: 'https://openrouter.ai/keys' },
+  openai: { name: 'OpenAI', url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keys: 'https://platform.openai.com/api-keys' },
+  anthropic: { name: 'Anthropic', url: '', model: 'claude-haiku-4-5', keys: 'https://console.anthropic.com/' },
+  custom: { name: 'Custom (OpenAI-compatible)', url: '', model: '', keys: '' },
+  none: { name: 'Off (read the prepared note)', url: '', model: '', keys: '' },
 };
 
 // ------------------------------------------------------------------ SYNC (GitHub contents API)
 const Sync = {
   timer: null,
   pushSoon() { if (!settings.ghToken || !settings.ghRepo) return; clearTimeout(this.timer); this.timer = setTimeout(() => this.push().catch(e => console.warn(e)), 4000); },
-  headers() { return { Authorization: 'Bearer ' + settings.ghToken, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }; },
+  headers() { return { Authorization: 'Bearer ' + settings.ghToken, Accept: 'application/vnd.github+json' }; },
+  explain(e) {
+    const m = String(e && e.message || e);
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Could not reach api.github.com from this phone (blocked request or no data). Progress is still saved on the phone.';
+    if (/401/.test(m)) return 'GitHub rejected the token (401). Check it was pasted completely.';
+    if (/403|404/.test(m)) return 'GitHub refused (' + (m.match(/40[34]/) || [''])[0] + '). The token must be a fine-grained token with this repository selected and Contents: Read and write.';
+    if (/409|422/.test(m)) return 'GitHub reported a conflict; try Sync now again.';
+    return m;
+  },
   url() { return 'https://api.github.com/repos/' + settings.ghRepo + '/contents/progress.json'; },
   async pull() {
     if (!settings.ghToken || !settings.ghRepo) return null;
     const r = await fetch(this.url(), { headers: this.headers(), cache: 'no-store' });
     if (r.status === 404) return null;
-    if (!r.ok) throw new Error('GitHub ' + r.status);
+    if (!r.ok) throw new Error('GitHub ' + r.status + ' on read');
     const j = await r.json();
     const remote = JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g, '')))));
     this.merge(remote); return j.sha;
@@ -498,11 +593,11 @@ const Sync = {
   },
   async push() {
     if (!settings.ghToken || !settings.ghRepo) return 'No GitHub token set.';
-    let sha = null; try { sha = await this.pull(); } catch (e) { }
+    let sha = null; try { sha = await this.pull(); } catch (e) { if (!/404/.test(String(e.message))) throw e; }
     const body = { message: 'progress from Pandora Practice Pal ' + new Date().toISOString(), content: btoa(unescape(encodeURIComponent(JSON.stringify(progress)))) };
     if (sha) body.sha = sha;
     const r = await fetch(this.url(), { method: 'PUT', headers: { ...this.headers(), 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error('GitHub push failed: ' + r.status);
+    if (!r.ok) throw new Error('GitHub ' + r.status + ' on write: ' + (await r.text()).slice(0, 100));
     return 'Synced ' + new Date().toLocaleTimeString();
   },
 };
@@ -513,7 +608,7 @@ const UI = {
   status(text, cls) { const el = $('sessStatus'); el.textContent = text; el.className = 'status' + (cls ? ' ' + cls : ''); },
   toggleCtl(id, on) { $(id).classList.toggle('on', !!on); },
   stage(text, kicker) { $('stageKicker').textContent = kicker || ''; $('spoken').textContent = text; $('heard').textContent = ''; this._full = text; },
-  highlight(chunk) { const full = this._full || ''; const i = full.indexOf(chunk.trim()); if (i < 0) return; const el = $('spoken'); el.textContent = ''; el.append(full.slice(0, i)); const b = document.createElement('span'); b.className = 'now'; b.textContent = chunk.trim(); el.append(b, full.slice(i + chunk.trim().length)); },
+  highlight(chunk) { const full = this._full || ''; const i = full.indexOf(chunk.trim()); if (i < 0) return; const el = $('spoken'); el.textContent = ''; el.append(full.slice(0, i)); const b = document.createElement('span'); b.className = 'now'; b.textContent = chunk.trim(); el.append(b, full.slice(i + chunk.trim().length)); try { b.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { } },
   heard(t) { $('heard').textContent = t ? 'Heard: “' + t + '”' : ''; },
   count() { $('sessCount').textContent = Session.right + ' / ' + Session.asked; },
   note(t) { $('heard').textContent = t; },
@@ -532,7 +627,7 @@ const UI = {
     const mins = Math.max(1, Math.round((Date.now() - S.startedAt) / 60000));
     let html = `<div class="stats"><div class="stat"><b>${mins}</b><small>minutes</small></div><div class="stat"><b>${S.asked}</b><small>asked</small></div><div class="stat"><b>${S.asked ? Math.round(100 * S.right / S.asked) : 0}%</b><small>right</small></div></div>`;
     if (weakest.length) html += '<h2 class="label" style="margin-top:16px">Review in Obsidian</h2><div class="weak">' + weakest.map(([k, n]) => { const [c, t] = k.split('|'); const page = bank.courses[c].topicPages[t]; return `<a href="obsidian://open?vault=Pandora&file=${encodeURIComponent(page)}"><span>${esc(courseName(c))} · ${esc(t)}</span><small>${n} missed →</small></a>`; }).join('') + '</div>';
-    if (S.log.length) html += '<ul class="summary-list">' + S.log.map(e => `<li class="${e.ok ? 'good' : 'bad'}">${esc(byId[e.id].q)}<small>${esc(courseName(e.course))} · ${esc(e.topic)}</small></li>`).join('') + '</ul>';
+    if (S.log.length) html += '<ul class="summary-list">' + S.log.map(e => `<li class="${e.ok ? 'good' : 'bad'}">${esc(e.q || (byId[e.id] || {}).q || '')}<small>${esc(courseName(e.course))} · ${esc(e.topic)}</small></li>`).join('') + '</ul>';
     $('summaryBody').innerHTML = html; this.show('summary');
     if (S.asked) Voice.say(`Session done. ${S.right} right out of ${S.asked}.` + (weakest.length ? ' Weakest today: ' + weakest.map(([k]) => k.split('|')[1]).join(', ') + '.' : ''));
   },
@@ -615,8 +710,13 @@ function wire() {
   $('voiceSel').onchange = (e) => { settings.voice = e.target.value; saveSettings(); };
   $('micOn').checked = settings.mic; $('micOn').onchange = (e) => { settings.mic = e.target.checked; saveSettings(); };
   $('optionsAloud').checked = settings.optionsAloud; $('optionsAloud').onchange = (e) => { settings.optionsAloud = e.target.checked; saveSettings(); };
+  const prov = $('provider'); prov.innerHTML = Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}">${esc(v.name)}</option>`).join(''); prov.value = settings.provider || 'gemini';
+  const provHint = () => { const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; $('model').placeholder = P.model || 'model id'; $('keyLink').innerHTML = P.keys ? `Get a key: <a href="${P.keys}" target="_blank" rel="noopener">${P.keys.replace(/^https?:\/\//, '')}</a>` : ''; $('baseUrlRow').hidden = settings.provider !== 'custom'; };
+  prov.onchange = (e) => { settings.provider = e.target.value; settings.model = ''; $('model').value = ''; saveSettings(); provHint(); }; provHint();
   $('apiKey').value = settings.apiKey; $('apiKey').onchange = (e) => { settings.apiKey = e.target.value.trim(); saveSettings(); };
   $('model').value = settings.model; $('model').onchange = (e) => { settings.model = e.target.value.trim(); saveSettings(); };
+  $('baseUrl').value = settings.baseUrl || ''; $('baseUrl').onchange = (e) => { settings.baseUrl = e.target.value.trim(); saveSettings(); };
+  $('btnTestAI').onclick = async () => { $('aiOut').textContent = 'Asking…'; try { $('aiOut').textContent = 'Reply: ' + await Expand.ask('Reply in one short spoken sentence.', [{ role: 'user', content: 'Say hello and name yourself.' }]); } catch (e) { $('aiOut').textContent = Sync.explain(e); } };
   $('ghRepo').value = settings.ghRepo; $('ghRepo').onchange = (e) => { settings.ghRepo = e.target.value.trim(); saveSettings(); };
   $('ghToken').value = settings.ghToken; $('ghToken').onchange = (e) => { settings.ghToken = e.target.value.trim(); saveSettings(); };
   $('btnTestVoice').onclick = async () => {
@@ -625,7 +725,7 @@ function wire() {
     $('testOut').textContent = 'Listening…'; const alts = await Ear.listen(6000);
     $('testOut').textContent = alts ? 'Heard: “' + alts[0] + '” → ' + (Parse.choice(alts[0], ['a', 'b', 'c']) === 1 ? 'understood as option two. Voice and microphone work.' : 'not understood as option two, but the microphone works.') : 'Nothing heard. Check the microphone permission for this site.';
   };
-  $('btnSync').onclick = async () => { $('syncOut').textContent = 'Syncing…'; try { $('syncOut').textContent = await Sync.push(); renderStats(); } catch (e) { $('syncOut').textContent = e.message; } };
+  $('btnSync').onclick = async () => { $('syncOut').textContent = 'Syncing…'; try { $('syncOut').textContent = await Sync.push(); renderStats(); } catch (e) { $('syncOut').textContent = Sync.explain(e); } };
   $('btnRefresh').onclick = async () => { $('syncOut').textContent = 'Checking…'; try { const before = bank.built; await loadBank(); $('syncOut').textContent = bank.built === before ? 'Already up to date (' + bank.asOf + ').' : 'New material loaded: ' + bank.asOf + '.'; renderHome(); } catch (e) { $('syncOut').textContent = e.message; } };
   $('btnExport').onclick = async () => { try { await navigator.clipboard.writeText(JSON.stringify(progress)); $('dataOut').textContent = 'Copied.'; } catch (e) { $('dataOut').textContent = 'Clipboard blocked.'; } };
   $('btnReset').onclick = () => { if ($('btnReset').dataset.armed) { for (const k of ['items', 'lessons', 'lectures', 'topics']) progress[k] = {}; progress.sessions = []; saveProgress(); $('dataOut').textContent = 'Progress reset.'; delete $('btnReset').dataset.armed; $('btnReset').textContent = 'Reset progress'; } else { $('btnReset').dataset.armed = '1'; $('btnReset').textContent = 'Tap again to confirm'; } };

@@ -114,13 +114,18 @@
   </div>
   <div class="block form">
     <h2 class="label">AI for “explain” conversations</h2>
-    <p class="hint">Used only when you ask. Your key stays on this phone.</p>
-    <label>Anthropic API key <input type="password" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
-    <label>Model <input type="text" id="model" value="claude-haiku-4-5"></label>
+    <p class="hint">Used only when you say “explain”. Google Gemini and Groq have free tiers that need no card. Your key stays on this phone.</p>
+    <label>Provider <select id="provider"></select></label>
+    <p class="hint" id="keyLink"></p>
+    <label>API key <input type="password" id="apiKey" autocomplete="off" placeholder="paste your key"></label>
+    <label>Model (leave blank for the default) <input type="text" id="model"></label>
+    <label id="baseUrlRow" hidden>Base URL <input type="text" id="baseUrl" placeholder="https://…/v1"></label>
+    <button class="btn" id="btnTestAI">Test the AI</button>
+    <p class="hint" id="aiOut"></p>
   </div>
   <div class="block form">
     <h2 class="label">Sync with the vault</h2>
-    <p class="hint">Progress is saved on this phone. Add a GitHub token (contents: read and write, this repo only) to sync results to the vault and pull new material.</p>
+    <p class="hint">Progress is always saved on this phone. A fine-grained GitHub token (this repository only, Contents: Read and write) also sends your results back to the vault after each drive.</p>
     <label>Repository <input type="text" id="ghRepo" placeholder="owner/repo"></label>
     <label>Token <input type="password" id="ghToken" autocomplete="off" placeholder="github_pat_…"></label>
     <div class="row gap"><button class="btn" id="btnSync">Sync now</button><button class="btn" id="btnRefresh">Check for new material</button></div>
