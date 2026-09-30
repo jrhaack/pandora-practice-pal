@@ -1,5 +1,5 @@
 // Pandora Practice service worker: app shell cached, bank.json network-first with cache fallback.
-const SHELL = 'pp-shell-v3';
+const SHELL = 'pp-shell-v4';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './parse.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

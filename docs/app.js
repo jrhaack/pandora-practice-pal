@@ -1,6 +1,6 @@
 /* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -535,33 +535,49 @@ Note for going deeper: ${ctx.expand || ''}`;
   async pickModel(P) {
     if (settings.model) return settings.model;
     if (settings.modelAuto && settings.modelAutoFor === settings.provider) return settings.modelAuto;
+    const list = await this.candidates(P); if (list.length) { settings.modelAuto = list[0]; settings.modelAutoFor = settings.provider; saveSettings(); return list[0]; }
+    return P.model;
+  },
+  // ordered list of usable model ids from the provider's /models endpoint
+  async candidates(P) {
+    if (this._cands && this._candsFor === settings.provider) return this._cands;
     const base = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') : P.url.replace(/\/chat\/completions$/, '');
     try {
       const r = await fetch(base + '/models', { headers: { Authorization: 'Bearer ' + settings.apiKey } });
       if (r.ok) {
         const j = await r.json(); const ids = (j.data || []).map(m => String(m.id).replace(/^models\//, ''));
         const good = ids.filter(id => !/embed|image|tts|audio|live|vision-only|whisper|guard|moderation|realtime|preview-\d|exp\b|thinking/i.test(id));
-        const pref = settings.provider === 'gemini' ? good.filter(id => /flash/i.test(id) && !/lite|8b/i.test(id)).sort().reverse()
-          : settings.provider === 'groq' ? good.filter(id => /llama.*versatile|llama-3\.\d-70b/i.test(id)).sort().reverse()
-          : settings.provider === 'openrouter' ? good.filter(id => /:free$/.test(id) && /gemma|llama|qwen|mistral/i.test(id))
-          : good.filter(id => /mini|flash|small/i.test(id)).sort().reverse();
-        const pick = pref[0] || good[0];
-        if (pick) { settings.modelAuto = pick; settings.modelAutoFor = settings.provider; saveSettings(); return pick; }
+        let pref;
+        if (settings.provider === 'gemini') { const flash = good.filter(id => /^gemini-\d/.test(id) && /flash/i.test(id) && !/-\d{3,}$/.test(id)); const ver = id => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]); const main = flash.filter(id => !/lite|8b/i.test(id)).sort((a, b) => ver(b) - ver(a) || a.length - b.length); const lite = flash.filter(id => /lite|8b/i.test(id)).sort((a, b) => ver(b) - ver(a) || a.length - b.length); pref = [...main, ...lite]; }
+        else if (settings.provider === 'groq') pref = good.filter(id => /llama.*versatile|llama-3\.\d-70b|llama-3\.\d-8b/i.test(id)).sort().reverse();
+        else if (settings.provider === 'openrouter') pref = good.filter(id => /:free$/.test(id) && /gemma|llama|qwen|mistral/i.test(id));
+        else pref = good.filter(id => /mini|flash|small/i.test(id)).sort().reverse();
+        this._cands = [...new Set([...pref, ...good])].slice(0, 8); this._candsFor = settings.provider; return this._cands;
       }
     } catch (e) { /* fall through to the default */ }
-    return P.model;
+    this._cands = P.model ? [P.model] : []; this._candsFor = settings.provider; return this._cands;
   },
   explain(e) {
     const m = String(e && e.message || e);
     if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Could not reach the AI service from this phone (no data, or the request was blocked).';
     if (/401|403|API_KEY_INVALID|invalid.*key/i.test(m)) return 'The AI service rejected the key. Check it was pasted completely and belongs to the chosen provider.';
     if (/404|not found|does not exist/i.test(m)) return 'The AI service says that model does not exist (' + m.slice(0, 140) + '). Clear the Model box so the app picks one automatically, or type a current model id.';
-    if (/429|quota|rate/i.test(m)) return 'Rate limit or quota hit on the free tier; wait a minute and try again.';
+    if (/limit: 0|limit":0|limit: "0"/i.test(m)) return 'This key has no free quota for that model (Google reports a limit of 0). ' + m.slice(0, 200);
+    if (/429|quota|rate/i.test(m)) return 'Rate limit or quota hit; wait a minute and try again. ' + m.slice(0, 220);
     return m;
   },
   async ask(system, messages) {
     const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; const model = settings.provider === 'anthropic' ? (settings.model || P.model) : await this.pickModel(P);
-    if (settings.provider !== 'anthropic') { const r = await this._chat(P, model, system, messages, true); if (r != null) return r; }
+    if (settings.provider !== 'anthropic') {
+      // try the chosen model, then the next candidates when a model is missing (404) or has no free quota (429)
+      const tried = [model]; let lastErr = null;
+      const cands = settings.model ? [] : (await this.candidates(P)).filter(m => m !== model);
+      for (const m of [model, ...cands.slice(0, 4)]) {
+        try { const r = await this._chat(P, m, system, messages); if (m !== model) { settings.modelAuto = m; saveSettings(); } return r; }
+        catch (e) { lastErr = e; if (!/API (404|429)/.test(String(e.message))) throw e; tried.push(m); }
+      }
+      throw new Error(String(lastErr && lastErr.message) + ' [tried: ' + [...new Set(tried)].join(', ') + ']');
+    }
     let res, text;
     res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 400, system, messages }) });
     if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
@@ -570,11 +586,10 @@ Note for going deeper: ${ctx.expand || ''}`;
   },
   clean(text) { return String(text).replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim() || 'No answer came back.'; },
   // OpenAI-compatible chat; on a 404 (model gone) with an auto-picked model, forget the pick and retry once with a fresh list
-  async _chat(P, model, system, messages, retry) {
+  async _chat(P, model, system, messages) {
     const url = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') + '/chat/completions' : P.url;
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + settings.apiKey, ...(settings.provider === 'openrouter' ? { 'HTTP-Referer': location.origin, 'X-Title': 'Pandora Practice Pal' } : {}) },
       body: JSON.stringify({ model, max_tokens: 400, messages: [{ role: 'system', content: system }, ...messages] }) });
-    if (res.status === 404 && retry && !settings.model) { settings.modelAuto = ''; saveSettings(); const m2 = await this.pickModel(P); if (m2 !== model) return this._chat(P, m2, system, messages, false); }
     if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 200));
     const j = await res.json();
     return this.clean((((j.choices || [])[0] || {}).message || {}).content || '');
