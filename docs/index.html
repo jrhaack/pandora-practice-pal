@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pandora Practice Pal</title>
+<meta name="description" content="Hands-free lectures and tutoring for DIGI 210, ELTR 238, MATH 237 and EFAB 202, built from the Pandora vault.">
+<meta name="theme-color" content="#101418">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ HOME ============ -->
+<main id="home" class="screen">
+  <header class="top">
+    <div>
+      <h1>Pandora Practice Pal</h1>
+      <p class="sub" id="bankInfo">Loading question bank…</p>
+    </div>
+    <button class="icon" id="btnSettings" aria-label="Settings">⚙</button>
+  </header>
+
+  <section class="block">
+    <div class="seg" role="tablist" aria-label="Mode">
+      <button class="segbtn on" data-mode="lecture" role="tab" aria-selected="true">Lecture</button>
+      <button class="segbtn" data-mode="tutor" role="tab" aria-selected="false">Tutor</button>
+    </div>
+    <p class="hint" id="modeHint">Lecture mode plays a spoken lecture. Say “explain” after any point to talk it through, then “resume”.</p>
+  </section>
+
+  <section class="block">
+    <h2 class="label">What to study</h2>
+    <div class="grid courses" id="courseGrid"></div>
+  </section>
+
+  <section class="block" id="lectureOpts">
+    <h2 class="label">Length</h2>
+    <div class="seg" id="lenSeg">
+      <button class="segbtn" data-len="10">10 min</button>
+      <button class="segbtn on" data-len="20">20 min</button>
+      <button class="segbtn" data-len="30">30 min</button>
+    </div>
+    <h2 class="label" style="margin-top:14px">Which lecture</h2>
+    <div class="seg" id="pickSeg">
+      <button class="segbtn on" data-pick="next">Next up</button>
+      <button class="segbtn" data-pick="lecture">By class</button>
+      <button class="segbtn" data-pick="topic">By topic</button>
+    </div>
+    <div id="pickList" class="picklist" hidden></div>
+  </section>
+
+  <section class="block" id="tutorOpts" hidden>
+    <p class="hint" id="tutorPlan"></p>
+  </section>
+
+  <div class="startwrap">
+    <button class="start" id="btnStart" disabled>Start</button>
+    <p class="hint center" id="startNote">Start before you drive. Everything after that is by voice or the big buttons.</p>
+  </div>
+
+  <section class="block" id="statsBlock"></section>
+</main>
+
+<!-- ============ SESSION ============ -->
+<main id="session" class="screen" hidden>
+  <header class="top slim">
+    <span class="chip" id="sessCourse">DIGI 210</span>
+    <span class="status" id="sessStatus">Speaking</span>
+    <span class="chip ghost" id="sessCount">0 / 0</span>
+  </header>
+
+  <div class="stage">
+    <p class="kicker" id="stageKicker"></p>
+    <div class="spoken" id="spoken" aria-live="polite"></div>
+    <div class="options" id="optionBtns"></div>
+    <p class="heard" id="heard"></p>
+  </div>
+
+  <div class="controls">
+    <button class="ctl" id="cRepeat">↺<span>Repeat</span></button>
+    <button class="ctl accent" id="cExplain">?<span>Explain</span></button>
+    <button class="ctl" id="cPause">⏸<span>Pause</span></button>
+    <button class="ctl" id="cNext">→<span>Next</span></button>
+    <button class="ctl danger" id="cEnd">■<span>End</span></button>
+  </div>
+</main>
+
+<!-- ============ SUMMARY ============ -->
+<main id="summary" class="screen" hidden>
+  <header class="top"><h1>Drive done</h1></header>
+  <div id="summaryBody" class="block"></div>
+  <div class="startwrap"><button class="start" id="btnHome">Back to start</button></div>
+</main>
+
+<!-- ============ SETTINGS ============ -->
+<main id="settings" class="screen" hidden>
+  <header class="top"><h1>Settings</h1><button class="icon" id="btnCloseSettings" aria-label="Close">✕</button></header>
+  <div class="block form">
+    <label>Speaking speed <output id="rateOut">1.0×</output><input type="range" id="rate" min="0.7" max="1.4" step="0.05" value="1"></label>
+    <label>Voice <select id="voiceSel"></select></label>
+    <label class="row"><input type="checkbox" id="micOn" checked> Listen for spoken answers (needs microphone permission)</label>
+    <label class="row"><input type="checkbox" id="optionsAloud" checked> Read multiple-choice options aloud</label>
+    <button class="btn" id="btnTestVoice">Test voice and microphone</button>
+    <p class="hint" id="testOut"></p>
+  </div>
+  <div class="block form">
+    <h2 class="label">AI for “explain” conversations</h2>
+    <p class="hint">Used only when you ask. Your key stays on this phone.</p>
+    <label>Anthropic API key <input type="password" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
+    <label>Model <input type="text" id="model" value="claude-haiku-4-5"></label>
+  </div>
+  <div class="block form">
+    <h2 class="label">Sync with the vault</h2>
+    <p class="hint">Progress is saved on this phone. Add a GitHub token (contents: read and write, this repo only) to sync results to the vault and pull new material.</p>
+    <label>Repository <input type="text" id="ghRepo" placeholder="owner/repo"></label>
+    <label>Token <input type="password" id="ghToken" autocomplete="off" placeholder="github_pat_…"></label>
+    <div class="row gap"><button class="btn" id="btnSync">Sync now</button><button class="btn" id="btnRefresh">Check for new material</button></div>
+    <p class="hint" id="syncOut"></p>
+  </div>
+  <div class="block form">
+    <h2 class="label">Data</h2>
+    <div class="row gap"><button class="btn" id="btnExport">Copy progress JSON</button><button class="btn danger" id="btnReset">Reset progress</button></div>
+    <p class="hint" id="dataOut"></p>
+    <p class="hint">Version <span id="ver"></span></p>
+  </div>
+</main>
+
+<audio id="silence" loop preload="auto"></audio>
+<script src="parse.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
