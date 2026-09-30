@@ -432,7 +432,7 @@ const Lecture = {
     const list = this.playlist(course, opts);
     if (!list.length) { await speak('There is no lecture available for that choice yet.'); return; }
     const first = list[0];
-    await speak((first.index === 0 ? 'Lecture: ' : 'Continuing: ') + first.L.title + '. ' + courseName(first.L.course) + '. Say explain after any point to talk it through, and resume to carry on.');
+    await speak((first.index === 0 ? 'Lecture: ' : 'Continuing: ') + first.L.title + '. ' + courseName(first.L.course) + '. Tap explain during any point to talk it through, or say explain at a quick check.');
     let sinceCheck = 0;
     for (let k = 0; k < list.length; k++) {
       const s = list[k]; Session.check();
