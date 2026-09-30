@@ -1,6 +1,6 @@
 /* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -525,27 +525,59 @@ Note for going deeper: ${ctx.expand || ''}`;
       turns.push({ role: 'user', content: q });
       UI.status('Thinking'); UI.stage('…', kicker);
       let reply;
-      try { reply = await this.ask(sys, turns); } catch (e) { reply = 'I could not reach the AI: ' + (e.message || 'network error') + '. Let us carry on.'; turns.pop(); await speak(reply, kicker); break; }
+      try { reply = await this.ask(sys, turns); } catch (e) { reply = 'The AI did not answer. ' + this.explain(e) + ' Let us carry on.'; turns.pop(); await speak(reply, kicker); break; }
       turns.push({ role: 'assistant', content: reply });
       await speak(reply, kicker);
       await speak('Anything else, or resume?', kicker);
     }
   },
+  // With no model set, ask the provider which models exist and pick a current, fast, free-tier one.
+  async pickModel(P) {
+    if (settings.model) return settings.model;
+    if (settings.modelAuto && settings.modelAutoFor === settings.provider) return settings.modelAuto;
+    const base = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') : P.url.replace(/\/chat\/completions$/, '');
+    try {
+      const r = await fetch(base + '/models', { headers: { Authorization: 'Bearer ' + settings.apiKey } });
+      if (r.ok) {
+        const j = await r.json(); const ids = (j.data || []).map(m => String(m.id).replace(/^models\//, ''));
+        const good = ids.filter(id => !/embed|image|tts|audio|live|vision-only|whisper|guard|moderation|realtime|preview-\d|exp\b|thinking/i.test(id));
+        const pref = settings.provider === 'gemini' ? good.filter(id => /flash/i.test(id) && !/lite|8b/i.test(id)).sort().reverse()
+          : settings.provider === 'groq' ? good.filter(id => /llama.*versatile|llama-3\.\d-70b/i.test(id)).sort().reverse()
+          : settings.provider === 'openrouter' ? good.filter(id => /:free$/.test(id) && /gemma|llama|qwen|mistral/i.test(id))
+          : good.filter(id => /mini|flash|small/i.test(id)).sort().reverse();
+        const pick = pref[0] || good[0];
+        if (pick) { settings.modelAuto = pick; settings.modelAutoFor = settings.provider; saveSettings(); return pick; }
+      }
+    } catch (e) { /* fall through to the default */ }
+    return P.model;
+  },
+  explain(e) {
+    const m = String(e && e.message || e);
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Could not reach the AI service from this phone (no data, or the request was blocked).';
+    if (/401|403|API_KEY_INVALID|invalid.*key/i.test(m)) return 'The AI service rejected the key. Check it was pasted completely and belongs to the chosen provider.';
+    if (/404|not found|does not exist/i.test(m)) return 'The AI service says that model does not exist (' + m.slice(0, 140) + '). Clear the Model box so the app picks one automatically, or type a current model id.';
+    if (/429|quota|rate/i.test(m)) return 'Rate limit or quota hit on the free tier; wait a minute and try again.';
+    return m;
+  },
   async ask(system, messages) {
-    const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; const model = settings.model || P.model;
+    const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; const model = settings.provider === 'anthropic' ? (settings.model || P.model) : await this.pickModel(P);
+    if (settings.provider !== 'anthropic') { const r = await this._chat(P, model, system, messages, true); if (r != null) return r; }
     let res, text;
-    if (settings.provider === 'anthropic') {
-      res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 400, system, messages }) });
-      if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
-      const j = await res.json(); text = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join(' ');
-    } else {
-      const url = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') + '/chat/completions' : P.url;
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + settings.apiKey, ...(settings.provider === 'openrouter' ? { 'HTTP-Referer': location.origin, 'X-Title': 'Pandora Practice Pal' } : {}) },
-        body: JSON.stringify({ model, max_tokens: 400, messages: [{ role: 'system', content: system }, ...messages] }) });
-      if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
-      const j = await res.json(); text = (((j.choices || [])[0] || {}).message || {}).content || '';
-    }
-    return String(text).replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim() || 'No answer came back.';
+    res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 400, system, messages }) });
+    if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
+    const j = await res.json(); text = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join(' ');
+    return this.clean(text);
+  },
+  clean(text) { return String(text).replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim() || 'No answer came back.'; },
+  // OpenAI-compatible chat; on a 404 (model gone) with an auto-picked model, forget the pick and retry once with a fresh list
+  async _chat(P, model, system, messages, retry) {
+    const url = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') + '/chat/completions' : P.url;
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + settings.apiKey, ...(settings.provider === 'openrouter' ? { 'HTTP-Referer': location.origin, 'X-Title': 'Pandora Practice Pal' } : {}) },
+      body: JSON.stringify({ model, max_tokens: 400, messages: [{ role: 'system', content: system }, ...messages] }) });
+    if (res.status === 404 && retry && !settings.model) { settings.modelAuto = ''; saveSettings(); const m2 = await this.pickModel(P); if (m2 !== model) return this._chat(P, m2, system, messages, false); }
+    if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 200));
+    const j = await res.json();
+    return this.clean((((j.choices || [])[0] || {}).message || {}).content || '');
   },
 };
 const PROVIDERS = {
@@ -712,11 +744,11 @@ function wire() {
   $('optionsAloud').checked = settings.optionsAloud; $('optionsAloud').onchange = (e) => { settings.optionsAloud = e.target.checked; saveSettings(); };
   const prov = $('provider'); prov.innerHTML = Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}">${esc(v.name)}</option>`).join(''); prov.value = settings.provider || 'gemini';
   const provHint = () => { const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; $('model').placeholder = P.model || 'model id'; $('keyLink').innerHTML = P.keys ? `Get a key: <a href="${P.keys}" target="_blank" rel="noopener">${P.keys.replace(/^https?:\/\//, '')}</a>` : ''; $('baseUrlRow').hidden = settings.provider !== 'custom'; };
-  prov.onchange = (e) => { settings.provider = e.target.value; settings.model = ''; $('model').value = ''; saveSettings(); provHint(); }; provHint();
+  prov.onchange = (e) => { settings.provider = e.target.value; settings.model = ''; settings.modelAuto = ''; $('model').value = ''; saveSettings(); provHint(); }; provHint();
   $('apiKey').value = settings.apiKey; $('apiKey').onchange = (e) => { settings.apiKey = e.target.value.trim(); saveSettings(); };
   $('model').value = settings.model; $('model').onchange = (e) => { settings.model = e.target.value.trim(); saveSettings(); };
   $('baseUrl').value = settings.baseUrl || ''; $('baseUrl').onchange = (e) => { settings.baseUrl = e.target.value.trim(); saveSettings(); };
-  $('btnTestAI').onclick = async () => { $('aiOut').textContent = 'Asking…'; try { $('aiOut').textContent = 'Reply: ' + await Expand.ask('Reply in one short spoken sentence.', [{ role: 'user', content: 'Say hello and name yourself.' }]); } catch (e) { $('aiOut').textContent = Sync.explain(e); } };
+  $('btnTestAI').onclick = async () => { $('aiOut').textContent = 'Asking…'; try { const reply = await Expand.ask('Reply in one short spoken sentence.', [{ role: 'user', content: 'Say hello and name yourself.' }]); $('aiOut').textContent = 'Reply: ' + reply + (settings.model ? '' : ' (model: ' + (settings.modelAuto || '') + ')'); } catch (e) { $('aiOut').textContent = Expand.explain(e); } };
   $('ghRepo').value = settings.ghRepo; $('ghRepo').onchange = (e) => { settings.ghRepo = e.target.value.trim(); saveSettings(); };
   $('ghToken').value = settings.ghToken; $('ghToken').onchange = (e) => { settings.ghToken = e.target.value.trim(); saveSettings(); };
   $('btnTestVoice').onclick = async () => {
