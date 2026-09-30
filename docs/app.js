@@ -1,6 +1,6 @@
 /* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '1.1.2';
+const VERSION = '1.1.3';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -564,6 +564,7 @@ Note for going deeper: ${ctx.expand || ''}`;
     if (/404|not found|does not exist/i.test(m)) return 'The AI service says that model does not exist (' + m.slice(0, 140) + '). Clear the Model box so the app picks one automatically, or type a current model id.';
     if (/limit: 0|limit":0|limit: "0"/i.test(m)) return 'This key has no free quota for that model (Google reports a limit of 0). ' + m.slice(0, 200);
     if (/429|quota|rate/i.test(m)) return 'Rate limit or quota hit; wait a minute and try again. ' + m.slice(0, 220);
+    if (/503|UNAVAILABLE|high demand|overloaded/i.test(m)) return 'The AI service is overloaded right now on every model it tried; try again in a minute. ' + m.slice(0, 160);
     return m;
   },
   async ask(system, messages) {
@@ -574,7 +575,7 @@ Note for going deeper: ${ctx.expand || ''}`;
       const cands = settings.model ? [] : (await this.candidates(P)).filter(m => m !== model);
       for (const m of [model, ...cands.slice(0, 4)]) {
         try { const r = await this._chat(P, m, system, messages); if (m !== model) { settings.modelAuto = m; saveSettings(); } return r; }
-        catch (e) { lastErr = e; if (!/API (404|429)/.test(String(e.message))) throw e; tried.push(m); }
+        catch (e) { lastErr = e; if (!/API (404|429|500|502|503|529)/.test(String(e.message))) throw e; tried.push(m); }
       }
       throw new Error(String(lastErr && lastErr.message) + ' [tried: ' + [...new Set(tried)].join(', ') + ']');
     }
