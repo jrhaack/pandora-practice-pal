@@ -1,6 +1,6 @@
 /* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '2.0.1';
+const VERSION = '2.1.0';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -396,6 +396,7 @@ const Lecture = {
       const kicker = courseName(s.L.course) + ' · ' + s.L.title + ' · ' + s.title;
       Session.ctx = { course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, eli5: s.eli5, deep: s.deep, expand: s.expand };
       if (list[k + 1]) Voice.prefetch(list[k + 1].text);
+      if (k > 0) await sleep(900);
       let ok = await speak(s.text, kicker, { startAt }); startAt = 0;
       let cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat');
       let jumpedBack = false;
@@ -518,19 +519,30 @@ const UI = {
     $('stageKicker').textContent = kicker || ''; $('heard').textContent = '';
     if (this._full === text && $('spoken').childNodes.length) return;   // same block (rewind): keep the layout, just move the highlight
     this._full = text; const el = $('spoken'); el.textContent = ''; el.scrollTop = 0; this._words = [];
-    const re = /\S+/g; let m, last = 0;
-    while ((m = re.exec(text))) { if (m.index > last) el.append(text.slice(last, m.index)); const sp = document.createElement('span'); sp.className = 'w'; sp.textContent = m[0]; el.append(sp); this._words.push({ at: m.index, el: sp }); last = m.index + m[0].length; }
-    this._cur = -1; this._sent = [];
+    const re = /\S+/g; let m, last = 0, prev = '', ph = 0, inPh = 0;
+    while ((m = re.exec(text))) {
+      if (m.index > last) { const gap = text.slice(last, m.index); const pw = this._words[this._words.length - 1]; if (pw) pw.el.textContent += gap; else el.append(gap); }   // spaces belong to the word before, so a phrase highlights as one band
+      const sp = document.createElement('span'); sp.className = 'w'; sp.textContent = SpeechText.display(m[0], prev); el.append(sp);
+      this._words.push({ at: m.index, el: sp, ph }); last = m.index + m[0].length; prev = m[0];
+      inPh++; if (/[,;:.!?)]$/.test(m[0]) && inPh >= 3 || inPh >= 8) { ph++; inPh = 0; }   // phrases: clause-sized chunks of 3–8 words
+    }
+    this._cur = -1; this._sent = []; this._ph = -1;
   },
   highlightAt(at, len, cStart, cLen) {
     const ws = this._words || []; let i = this._cur;
     if (i < 0 || !ws[i] || ws[i].at > at) i = 0;
     while (i + 1 < ws.length && ws[i + 1].at <= at) i++;
     if (i === this._cur && this._sentKey === cStart) return;
-    if (this._sentKey !== cStart) { for (const s of this._sent) s.classList.remove('s'); this._sent = ws.filter(w => w.at >= cStart && w.at < cStart + cLen).map(w => w.el); for (const s of this._sent) s.classList.add('s'); this._sentKey = cStart; }
-    if (ws[this._cur]) ws[this._cur].el.classList.remove('now');
-    for (let j = 0; j < ws.length; j++) ws[j].el.classList.toggle('past', j < i);
-    this._cur = i; const w = ws[i]; if (!w) return; w.el.classList.add('now');
+    if (this._sentKey !== cStart && (settings.hl || 'phrase') !== 'off') { for (const s of this._sent) s.classList.remove('s'); this._sent = ws.filter(w => w.at >= cStart && w.at < cStart + cLen).map(w => w.el); for (const s of this._sent) s.classList.add('s'); this._sentKey = cStart; }
+    this._cur = i; const w = ws[i]; if (!w) return;
+    const hl = settings.hl || 'phrase';
+    if (hl === 'phrase' && w.ph !== this._ph) {                   // the whole phrase being spoken
+      this._ph = w.ph;
+      for (const x of ws) { x.el.classList.toggle('now', x.ph === w.ph); x.el.classList.toggle('past', x.ph < w.ph); }
+    } else if (hl === 'word') {                                   // one word at a time
+      for (let j = 0; j < ws.length; j++) { ws[j].el.classList.toggle('now', j === i); ws[j].el.classList.toggle('past', j < i); }
+    } else if (hl === 'off') { for (const x of ws) x.el.classList.remove('now', 'past', 's'); }
+    $('spoken').dataset.hl = hl;
     const box = $('spoken'); const target = w.el.offsetTop - box.offsetTop - box.clientHeight * 0.38;
     if (Math.abs(box.scrollTop - target) > 8) box.scrollTo({ top: Math.max(0, target), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   },
@@ -645,9 +657,51 @@ function renderSettings() {
   $('voiceWhy').textContent = st.neural === 'ready' ? 'Kokoro · generated on this phone (' + (st.device || 'webgpu') + ')' : st.why === 'nogpu' ? 'This browser has no WebGPU. Use Chrome or the installed app for the natural voice.' : st.neural === 'failed' ? 'It could not load: ' + String(st.why || '').slice(0, 120) : '';
   $('voiceMeter').hidden = st.neural !== 'loading'; $('voiceMeterBar').style.width = Math.round(st.progress) + '%';
   $('btnVoice').hidden = st.neural === 'ready' || st.why === 'nogpu'; $('btnVoice').disabled = st.neural === 'loading';
-  $('micState').textContent = Ear.label;
-  $('micWhy').textContent = Ear.st.nativeOk ? (Ear.st.nativeBroken ? 'The built-in recogniser failed here, so Whisper is used.' : '') : 'This browser has no built-in speech recognition, so answers are recorded and transcribed by Whisper on Groq.';
+  renderMic();
 }
+function platform() { const u = navigator.userAgent; return /Android/.test(u) ? 'android' : /iPhone|iPad/.test(u) ? 'ios' : /Mac/.test(u) ? 'mac' : 'desktop'; }
+function browserName() { const u = navigator.userAgent; return /Firefox/.test(u) ? 'firefox' : /Edg\//.test(u) ? 'edge' : /Chrome/.test(u) ? 'chrome' : /Safari/.test(u) ? 'safari' : 'other'; }
+function permSteps(state) {
+  const pf = platform(), br = browserName(), standalone = matchMedia('(display-mode: standalone)').matches;
+  const steps = [];
+  if (pf === 'android' && standalone) steps.push('Open Android Settings → Apps → Practice Pal (or Chrome) → Permissions → Microphone → Allow only while using the app.');
+  else if (pf === 'android' && br === 'firefox') steps.push('In Firefox tap the lock icon left of the address → Permissions → Microphone → Allowed.', 'Also check Android Settings → Apps → Firefox → Permissions → Microphone → Allow.');
+  else if (pf === 'android') steps.push('Tap the tune/lock icon left of the address → Permissions → Microphone → Allow.', 'Also check Android Settings → Apps → Chrome → Permissions → Microphone → Allow.');
+  else if (pf === 'mac') steps.push('Click the icon left of the address bar → Microphone → Allow.', 'Then Apple menu → System Settings → Privacy & Security → Microphone → turn on your browser (or the Claude app).', 'Pick your built-in microphone in "Microphone to use" below if headphones are taking over.');
+  else steps.push('Click the icon left of the address bar → Microphone → Allow, then reload.');
+  if (state === 'denied') steps.push('After changing it, come back here and press “Allow the microphone” again.');
+  return '<ol>' + steps.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>';
+}
+async function renderMic() {
+  const perm = await Ear.permission();
+  const dot = $('permDot'); dot.className = 'dot ' + (perm === 'granted' ? 'ok' : perm === 'denied' ? 'bad' : 'ask');
+  $('permState').textContent = perm === 'granted' ? 'Microphone allowed' : perm === 'denied' ? 'Microphone blocked' : 'Microphone not allowed yet';
+  $('permWhy').textContent = perm === 'denied' ? 'The browser will not ask again until you change the setting — follow the steps below.' : perm === 'granted' ? '' : 'Press the button and choose Allow.';
+  $('btnPerm').hidden = perm === 'granted'; $('permSteps').innerHTML = permSteps(perm); $('permHelp').open = perm === 'denied';
+  // device list (labels appear once permission is granted)
+  const devs = await Ear.devices(); const sel = $('micSel'); const cur = settings.micId || '';
+  sel.innerHTML = '<option value="">System default</option>' + devs.filter(d => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications').map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Microphone ' + (i + 1))}</option>`).join('');
+  sel.value = devs.some(d => d.deviceId === cur) ? cur : '';
+  $('micSelHint').hidden = !Ear.st.nativeOk;
+  $('earMode').value = settings.earMode || 'auto';
+  $('micState').textContent = 'Using: ' + Ear.label;
+  $('micWhy').textContent = Ear.st.lastError || (!Ear.st.nativeOk ? 'This browser has no built-in speech recognition, so answers are transcribed by Whisper.' : '');
+  const ls = Ear.st.local; $('btnLocalStt').hidden = ls === 'ready'; $('btnLocalStt').disabled = ls === 'loading';
+  $('sttMeter').hidden = ls !== 'loading'; $('sttMeterBar').style.width = Math.round(Ear.st.localProgress) + '%';
+}
+let meterStop = null;
+async function runMeter(sec = 10) {
+  if (meterStop) { meterStop(); return; }
+  let s; try { s = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: settings.micId ? { exact: settings.micId } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); } catch (e) { $('testOut').textContent = 'Could not open the microphone: ' + (e.name === 'NotAllowedError' ? 'permission blocked.' : e.message); renderMic(); return; }
+  const ac = new AudioContext(); const an = ac.createAnalyser(); an.fftSize = 1024; ac.createMediaStreamSource(s).connect(an); const buf = new Float32Array(an.fftSize);
+  const label = s.getAudioTracks()[0].label; $('testOut').textContent = 'Listening on: ' + label + '. Talk and watch the bar.'; $('btnMeter').textContent = 'Stop';
+  let on = true; meterStop = () => { on = false; };
+  const t0 = performance.now(); let peak = 0;
+  while (on && performance.now() - t0 < sec * 1000) { an.getFloatTimeDomainData(buf); let e = 0; for (const x of buf) e += x * x; const r = Math.sqrt(e / buf.length); peak = Math.max(peak, r); $('levelBar').style.width = Math.min(100, r * 400) + '%'; await sleep(60); }
+  s.getTracks().forEach(t => t.stop()); ac.close(); meterStop = null; $('btnMeter').textContent = 'Watch the level'; $('levelBar').style.width = '0';
+  $('testOut').textContent = peak < 0.01 ? 'Almost no sound reached the app from “' + label + '”. Pick another microphone above or check that it is not muted.' : peak < 0.04 ? 'Sound is coming through from “' + label + '” but quietly. Speak up or move the phone closer.' : 'Good level from “' + label + '”.';
+}
+renderMic.renderMicSoon = () => { if (!$('settings').hidden) renderMic(); };
 function renderKeys() {
   const box = $('keyRows'); box.innerHTML = '';
   CHAIN.forEach((p, i) => {
@@ -685,10 +739,19 @@ function wire() {
   $('btnCloseSettings').onclick = () => { renderHome(); UI.show('home'); };
   $('btnVoice').onclick = () => { Voice.initNeural(true); renderSettings(); };
   Voice.onChange(() => { renderVoiceChip(); if (!$('settings').hidden) renderSettings(); });
+  const hlPaint = () => document.querySelectorAll('[data-hl]').forEach(b => b.classList.toggle('on', b.dataset.hl === (settings.hl || 'phrase')));
+  document.querySelectorAll('[data-hl]').forEach(b => b.onclick = () => { settings.hl = b.dataset.hl; saveSettings(); hlPaint(); }); hlPaint();
   $('rate').value = settings.rate; $('rateOut').textContent = (+settings.rate).toFixed(2) + '×';
   $('rate').oninput = (e) => { settings.rate = +e.target.value; $('rateOut').textContent = settings.rate.toFixed(2) + '×'; saveSettings(); };
-  $('micOn').checked = settings.mic; $('micOn').onchange = (e) => { settings.mic = e.target.checked; saveSettings(); renderSettings(); };
-  $('earMode').value = settings.earMode || 'auto'; $('earMode').onchange = (e) => { settings.earMode = e.target.value; saveSettings(); renderSettings(); };
+  $('micOn').checked = settings.mic; $('micOn').onchange = (e) => { settings.mic = e.target.checked; saveSettings(); renderMic(); };
+  $('earMode').value = settings.earMode || 'auto'; $('earMode').onchange = (e) => { settings.earMode = e.target.value; saveSettings(); if (e.target.value === 'local') Ear.initLocal(); renderMic(); };
+  $('micSel').onchange = (e) => { settings.micId = e.target.value; saveSettings(); Ear.release(); if (settings.micId && (settings.earMode || 'auto') === 'auto') Ear.initLocal(); renderMic(); };
+  $('btnPerm').onclick = async () => { const ok = await Ear.request(); $('testOut').textContent = ok ? 'Microphone allowed.' : 'Still blocked — follow the steps below.'; Ear.release(); renderMic(); };
+  $('btnLocalStt').onclick = () => { Ear.initLocal(); renderMic(); };
+  $('btnMeter').onclick = () => runMeter(12);
+  Ear.onChange(() => renderMic.renderMicSoon());
+  try { navigator.mediaDevices.addEventListener('devicechange', () => renderMic.renderMicSoon()); } catch (e) { }
+  if (settings.localStt || (!Ear.st.nativeOk && navigator.mediaDevices)) Ear.initLocal();   // Firefox etc.: get the on-device recogniser ready
   $('optionsAloud').checked = settings.optionsAloud; $('optionsAloud').onchange = (e) => { settings.optionsAloud = e.target.checked; saveSettings(); };
   $('btnTestAI').onclick = async () => {
     const out = $('aiOut'); out.innerHTML = '';
@@ -704,8 +767,8 @@ function wire() {
   $('ghToken').value = settings.ghToken; $('ghToken').onchange = (e) => { settings.ghToken = e.target.value.trim(); saveSettings(); };
   $('btnTestVoice').onclick = async () => {
     Voice.unlock(); $('testOut').textContent = 'Speaking…'; await Voice.say('Testing. Say: option two.');
-    if (!Ear.available) { $('testOut').textContent = Ear.st.nativeOk ? 'The microphone is turned off above.' : 'This browser has no built-in speech recognition. Add a Groq key in the AI chain to use Whisper, or use Chrome or the installed app.'; return; }
-    $('testOut').textContent = 'Listening (' + Ear.label + ')…'; const alts = await Ear.listen(6000);
+    if (!Ear.available) { $('testOut').textContent = 'The microphone is turned off above, or no recogniser is available.'; return; }
+    $('testOut').textContent = 'Listening (' + Ear.label + ')… say “option two”.'; const alts = await Ear.listen(7000);
     $('testOut').textContent = alts ? 'Heard: “' + alts[0] + '” → ' + (Parse.choice(alts[0], ['a', 'b', 'c']) === 1 ? 'understood as option two. Voice and microphone work.' : 'not option two, but the microphone works.') : ('Nothing heard. ' + (Ear.st.lastError || 'Check the microphone permission for this app.'));
     renderSettings();
   };

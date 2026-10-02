@@ -21,9 +21,9 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) { --bg: #f5f2ea; --bg2: #efeadf; --panel: #ffffff; --panel2: #f7f4ed; --line: #ddd6c8; --fg: #161b22; --muted: #5a6474; --dim: #8b93a0; --accent: #c9790a; --accent-ink: #fff8ec; --teal: #0f8f84; color-scheme: light; }
+  :root:not([data-theme="dark"]) { --bg: #eef1f7; --bg2: #dfe6f3; --panel: #ffffff; --panel2: #f3f6fb; --line: #cfd8e6; --fg: #0f1722; --muted: #4a5568; --dim: #7a8699; --accent: #f08c00; --accent-ink: #1b1000; --teal: #0d9488; --digi: #7c3aed; --eltr: #ea580c; --math: #2563eb; --efab: #db2777; --mix: #0d9488; --focus: #f08c00; color-scheme: light; }
 }
-:root[data-theme="light"] { --bg: #f5f2ea; --bg2: #efeadf; --panel: #ffffff; --panel2: #f7f4ed; --line: #ddd6c8; --fg: #161b22; --muted: #5a6474; --dim: #8b93a0; --accent: #c9790a; --accent-ink: #fff8ec; --teal: #0f8f84; color-scheme: light; }
+:root[data-theme="light"] { --bg: #eef1f7; --bg2: #dfe6f3; --panel: #ffffff; --panel2: #f3f6fb; --line: #cfd8e6; --fg: #0f1722; --muted: #4a5568; --dim: #7a8699; --accent: #f08c00; --accent-ink: #1b1000; --teal: #0d9488; --digi: #7c3aed; --eltr: #ea580c; --math: #2563eb; --efab: #db2777; --mix: #0d9488; --focus: #f08c00; color-scheme: light; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -69,11 +69,11 @@ a { color: var(--accent); }
 
 /* course tiles */
 .courses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.course { position: relative; border: 1.5px solid var(--line); background: var(--panel); border-radius: 16px; padding: 14px 44px 14px 14px; text-align: left; min-height: 78px; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.course { position: relative; border: 1.5px solid color-mix(in srgb, var(--c) 35%, var(--line)); background: linear-gradient(160deg, color-mix(in srgb, var(--c) 16%, var(--panel)), var(--panel) 70%); border-radius: 16px; padding: 14px 44px 14px 14px; text-align: left; min-height: 78px; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
 .course b { font-family: var(--display); font-size: 18px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .course b::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
 .course small { color: var(--muted); font-size: 13px; line-height: 1.25; }
-.course.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 12%, var(--panel)); }
+.course.on { border-color: var(--c); border-width: 2.5px; background: color-mix(in srgb, var(--c) 26%, var(--panel)); box-shadow: 0 6px 18px color-mix(in srgb, var(--c) 28%, transparent); }
 .ring { position: absolute; right: 12px; top: 50%; translate: 0 -50%; width: 24px; height: 24px; border-radius: 50%; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); -webkit-mask: radial-gradient(circle, transparent 7px, #000 8px); mask: radial-gradient(circle, transparent 7px, #000 8px); }
 
 .picklist { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 42vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 14px; padding: 6px; background: var(--panel); }
@@ -108,10 +108,10 @@ a { color: var(--accent); }
 .kicker { margin: 0; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
 .spoken { flex: 1; min-height: 120px; overflow-y: auto; font-size: clamp(23px, 5.6vw, 31px); line-height: 1.45; scroll-behavior: auto;
   -webkit-mask: linear-gradient(transparent 0, #000 7%, #000 88%, transparent 100%); mask: linear-gradient(transparent 0, #000 7%, #000 88%, transparent 100%); padding: 14px 2px 40vh; }
-.spoken .w { color: color-mix(in srgb, var(--fg) 42%, transparent); transition: color .18s ease, background-color .18s ease; border-radius: 5px; }
-.spoken .w.s { color: color-mix(in srgb, var(--fg) 75%, transparent); }
-.spoken .w.past { color: var(--fg); }
-.spoken .w.now { color: var(--accent-ink); background: var(--accent); box-shadow: 0 0 0 3px var(--accent); }
+.spoken .w { color: color-mix(in srgb, var(--fg) 40%, transparent); transition: color .25s ease, background-color .25s ease; -webkit-box-decoration-break: clone; box-decoration-break: clone; padding: 2px 0; }
+.spoken .w.s { color: color-mix(in srgb, var(--fg) 72%, transparent); }
+.spoken .w.past { color: color-mix(in srgb, var(--fg) 88%, transparent); }
+.spoken .w.now { color: var(--fg); background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .heard { margin: 0; color: var(--teal); font-size: 15px; min-height: 1.4em; }
 .options { display: grid; gap: 8px; }
 .opt { background: var(--panel); border: 2px solid var(--line); font-size: 19px; text-align: left; padding: 14px; border-radius: 14px; display: flex; gap: 12px; align-items: center; }
@@ -180,3 +180,19 @@ a { color: var(--accent); }
 }
 @media (min-width: 560px) { .courses { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-height: 700px) { .ctl { min-height: 60px; } .ctl.hero { min-height: 68px; } .ctl.soft { min-height: 48px; } }
+
+/* microphone settings */
+.permrow { display: flex; gap: 12px; align-items: flex-start; }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--dim); margin-top: 5px; flex: none; }
+.dot.ok { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 25%, transparent); }
+.dot.bad { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 25%, transparent); }
+.dot.ask { background: var(--accent); }
+.help { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 15px; }
+.help summary { cursor: pointer; font-weight: 700; }
+.help ol { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--fg); }
+.levelwrap { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+.level { flex: 1; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; }
+.level i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--teal), var(--good) 60%, var(--accent)); transition: width .08s linear; }
+
+.spoken[data-hl="word"] .w.now { background: var(--accent); color: var(--accent-ink); }
+.spoken[data-hl="off"] .w { color: var(--fg); }

@@ -5,7 +5,7 @@
    Fallback: the system voice (speechSynthesis) when WebGPU is not available. */
 'use strict';
 const Voice = (() => {
-  const GAP = 0.16;            // seconds of air between sentences
+  const GAP = 0.42;            // seconds of air between sentences (a natural breath)
   const st = {
     engine: 'system',          // 'neural' | 'system'
     neural: 'off',             // off | loading | ready | failed
@@ -89,7 +89,7 @@ const Voice = (() => {
       const id0 = inflight.get(k);
       if (id0 != null && st.waiters.has(id0)) { st.waiters.get(id0).res.push(res); return; }
       const id = ++st.seq; inflight.set(k, id); st.waiters.set(id, { key: k, res: [res] });
-      st.worker.postMessage({ type: 'gen', id, text, voice: 'af_heart', speed: settings.rate || 1, urgent: !!urgent });
+      st.worker.postMessage({ type: 'gen', id, text: SpeechText.forTTS(text), voice: 'af_heart', speed: 0.94 * (settings.rate || 1), urgent: !!urgent });
     });
   }
   function prefetch(text) { if (st.engine !== 'neural' || st.neural !== 'ready' || !text) return; for (const c of chunks(text)) if (!st.cache.has(key(c.text))) get(c.text, false); }
@@ -163,7 +163,7 @@ const Voice = (() => {
       const d = estDur(c.text); if (base + d <= startAt) { base += d; continue; }
       const words = wordMap(c);
       await new Promise((resolve) => {
-        const u = new SpeechSynthesisUtterance(c.text); if (v) { u.voice = v; u.lang = v.lang; } u.rate = settings.rate || 1;
+        const u = new SpeechSynthesisUtterance(SpeechText.forTTS(c.text)); if (v) { u.voice = v; u.lang = v.lang; } u.rate = settings.rate || 1;
         const t0 = performance.now(); let gotBoundary = false; let done = false;
         const fin = () => { if (done) return; done = true; clearInterval(iv); resolve(); };
         u.onboundary = (e) => { if (e.name === 'word' || e.charIndex != null) { gotBoundary = true; const at = c.start + e.charIndex; const m = /\S+/.exec(c.text.slice(e.charIndex)); if (opts.onProgress) opts.onProgress(at, m ? m[0].length : 1, c.start, c.text.length); } };

@@ -111,16 +111,31 @@
     <div class="meter" id="voiceMeter" hidden><i id="voiceMeterBar"></i></div>
     <button class="btn primary" id="btnVoice">Download the natural voice (about 330 MB, once)</button>
     <p class="hint">A neural voice that runs on your phone, so it works offline and costs nothing. Download on Wi-Fi. It needs Chrome or the installed app (WebGPU); other browsers use the phone's own voice.</p>
+    <h2 class="label">Follow-along highlight</h2>
+    <div class="seg" id="hlSeg"><button class="segbtn" data-hl="phrase">Phrase</button><button class="segbtn" data-hl="word">Word</button><button class="segbtn" data-hl="off">Off</button></div>
     <label>Speaking speed <output id="rateOut">1.0×</output><input type="range" id="rate" min="0.8" max="1.3" step="0.05" value="1"></label>
   </section>
 
-  <section class="card form">
+  <section class="card form" id="micCard">
     <h2 class="label">Microphone</h2>
+    <div class="permrow"><span class="dot" id="permDot"></span><div class="statusrow"><b id="permState">Checking permission…</b><small id="permWhy"></small></div></div>
+    <button class="btn primary" id="btnPerm">Allow the microphone</button>
+    <details class="help" id="permHelp"><summary>How to fix a blocked microphone</summary><div id="permSteps"></div></details>
+    <label>Microphone to use <select id="micSel"><option value="">System default</option></select></label>
+    <p class="hint" id="micSelHint">Choosing a specific microphone uses Whisper for recognition, because the browser's built-in recogniser always listens on the system default.</p>
+    <div class="levelwrap"><span>Input level</span><div class="level"><i id="levelBar"></i></div></div>
+    <label>Recognition <select id="earMode">
+      <option value="auto">Automatic (best available)</option>
+      <option value="native">Built-in only (Chrome / installed app)</option>
+      <option value="local">On-device Whisper (no key, works everywhere)</option>
+      <option value="groq">Whisper on Groq (needs the Groq key)</option>
+    </select></label>
     <div class="statusrow"><b id="micState"></b><small id="micWhy"></small></div>
+    <div class="meter" id="sttMeter" hidden><i id="sttMeterBar"></i></div>
+    <button class="btn" id="btnLocalStt">Download on-device recogniser (about 80 MB, once)</button>
     <label class="row"><input type="checkbox" id="micOn" checked> Listen for spoken answers</label>
-    <label>Recognition <select id="earMode"><option value="auto">Automatic (built-in, Whisper as backup)</option><option value="whisper">Always Whisper (needs the Groq key)</option></select></label>
     <label class="row"><input type="checkbox" id="optionsAloud" checked> Read multiple-choice options aloud</label>
-    <button class="btn" id="btnTestVoice">Test voice and microphone</button>
+    <div class="row gap"><button class="btn primary" id="btnTestVoice">Test: say “option two”</button><button class="btn" id="btnMeter">Watch the level</button></div>
     <p class="hint" id="testOut"></p>
   </section>
 
@@ -154,6 +169,7 @@
 <script src="voice.js"></script>
 <script src="ear.js"></script>
 <script src="ai.js"></script>
+<script src="speechtext.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
