@@ -1,4 +1,4 @@
-/* Pandora Practice Pal — what is spoken vs what is shown.
+/* Murmur — what is spoken vs what is shown.
    forTTS(): fixes words the neural voice mispronounces, by respelling them before synthesis (the screen keeps the real spelling).
    display(): shows units as symbols after a number ("4.7 kilohms" → "4.7 kΩ") while the voice still says the full word. */
 'use strict';

@@ -1,7 +1,7 @@
 {
   "id": "/pandora-practice-pal/",
-  "name": "Pandora’s Practice Pal",
-  "short_name": "Practice Pal",
+  "name": "Murmur · Study by ear",
+  "short_name": "Murmur",
   "description": "Hands-free spoken lectures and voice tutoring for DIGI 210, ELTR 238, MATH 237 and EFAB 202, built from the Pandora study vault. Made for studying on the drive to school.",
   "lang": "en-CA",
   "dir": "ltr",
@@ -38,6 +38,6 @@
   "screenshots": [
     { "src": "screenshots/home.png", "sizes": "1080x2340", "type": "image/png", "form_factor": "narrow", "label": "Pick a course, resume a lecture or start tutoring" },
     { "src": "screenshots/lecture.png", "sizes": "1080x2340", "type": "image/png", "form_factor": "narrow", "label": "Spoken lecture with word-by-word highlighting" },
-    { "src": "screenshots/wide.png", "sizes": "1920x1080", "type": "image/png", "form_factor": "wide", "label": "Practice Pal on a larger screen" }
+    { "src": "screenshots/wide.png", "sizes": "1920x1080", "type": "image/png", "form_factor": "wide", "label": "Murmur on a larger screen" }
   ]
 }

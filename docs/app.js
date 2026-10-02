@@ -1,6 +1,6 @@
-/* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
+/* Murmur — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -125,7 +125,7 @@ const Media = {
     if (!this.el.src) this.el.src = silentWav();
     this.el.play().catch(() => { });
     if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: 'Pandora Practice Pal', artist: 'Lecture and tutor', album: 'Pandora vault' });
+      navigator.mediaSession.metadata = new MediaMetadata({ title: 'Murmur', artist: 'Lecture and tutor', album: 'Pandora vault' });
       const map = { play: 'resume', pause: 'pause', nexttrack: 'skip', previoustrack: 'repeat', seekforward: 'skip', seekbackward: 'repeat' };
       for (const k in map) { try { navigator.mediaSession.setActionHandler(k, () => { Session.paused && map[k] !== 'resume' ? Session.resume() : null; Input.push(map[k]); }); } catch (e) { } }
     }
@@ -502,7 +502,7 @@ const Sync = {
   async push() {
     if (!settings.ghToken || !settings.ghRepo) return 'No GitHub token set.';
     let sha = null; try { sha = await this.pull(); } catch (e) { if (!/404/.test(String(e.message))) throw e; }
-    const body = { message: 'progress from Pandora Practice Pal ' + new Date().toISOString(), content: btoa(unescape(encodeURIComponent(JSON.stringify(progress)))) };
+    const body = { message: 'progress from Murmur ' + new Date().toISOString(), content: btoa(unescape(encodeURIComponent(JSON.stringify(progress)))) };
     if (sha) body.sha = sha;
     const r = await fetch(this.url(), { method: 'PUT', headers: { ...this.headers(), 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error('GitHub ' + r.status + ' on write: ' + (await r.text()).slice(0, 100));
@@ -664,7 +664,7 @@ function browserName() { const u = navigator.userAgent; return /Firefox/.test(u)
 function permSteps(state) {
   const pf = platform(), br = browserName(), standalone = matchMedia('(display-mode: standalone)').matches;
   const steps = [];
-  if (pf === 'android' && standalone) steps.push('Open Android Settings → Apps → Practice Pal (or Chrome) → Permissions → Microphone → Allow only while using the app.');
+  if (pf === 'android' && standalone) steps.push('Open Android Settings → Apps → Murmur (or Chrome) → Permissions → Microphone → Allow only while using the app.');
   else if (pf === 'android' && br === 'firefox') steps.push('In Firefox tap the lock icon left of the address → Permissions → Microphone → Allowed.', 'Also check Android Settings → Apps → Firefox → Permissions → Microphone → Allow.');
   else if (pf === 'android') steps.push('Tap the tune/lock icon left of the address → Permissions → Microphone → Allow.', 'Also check Android Settings → Apps → Chrome → Permissions → Microphone → Allow.');
   else if (pf === 'mac') steps.push('Click the icon left of the address bar → Microphone → Allow.', 'Then Apple menu → System Settings → Privacy & Security → Microphone → turn on your browser (or the Claude app).', 'Pick your built-in microphone in "Microphone to use" below if headphones are taking over.');
@@ -736,6 +736,7 @@ function wire() {
   $('cEnd').onclick = () => Input.push('stop');
   // settings
   $('btnSettings').onclick = () => { renderSettings(); renderKeys(); UI.show('settings'); };
+  $('scLink').onclick = (e) => { e.preventDefault(); $('btnSettings').onclick(); setTimeout(() => document.querySelector('.sc-about').scrollIntoView({ behavior: 'smooth' }), 60); };
   $('btnCloseSettings').onclick = () => { renderHome(); UI.show('home'); };
   $('btnVoice').onclick = () => { Voice.initNeural(true); renderSettings(); };
   Voice.onChange(() => { renderVoiceChip(); if (!$('settings').hidden) renderSettings(); });

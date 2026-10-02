@@ -1,4 +1,4 @@
-/* Pandora Practice Pal — voice input that works in every browser.
+/* Murmur — voice input that works in every browser.
    Engines, tried in this order (Settings → Microphone can force one):
    1. built-in  – the browser's speech recognition (Chrome, the installed app). Fast and free, but always uses the
                   system's default microphone.

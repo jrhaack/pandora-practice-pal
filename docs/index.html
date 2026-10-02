@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pandora’s Practice Pal</title>
+<title>Murmur · Study by ear</title>
 <meta name="description" content="Hands-free spoken lectures and voice tutoring for DIGI 210, ELTR 238, MATH 237 and EFAB 202, built from the Pandora vault.">
 <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f5f2ea" media="(prefers-color-scheme: light)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Practice Pal">
+<meta name="apple-mobile-web-app-title" content="Murmur">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
@@ -24,7 +24,7 @@
 <!-- ============ HOME ============ -->
 <main id="home" class="screen">
   <header class="appbar">
-    <div class="brand"><img src="icons/icon-192.png" alt="" width="40" height="40"><div><h1>Pandora’s Practice Pal</h1><p class="sub" id="bankInfo">Loading…</p></div></div>
+    <div class="brand"><img src="icons/icon-192.png" alt="" width="40" height="40"><div><h1>Murmur <span class="tag">study by ear</span></h1><p class="sub" id="bankInfo">Loading…</p></div></div>
     <button class="iconbtn" id="btnSettings" aria-label="Settings"></button>
   </header>
 
@@ -64,6 +64,7 @@
   </div>
 
   <section class="block" id="statsBlock"></section>
+  <footer class="sc-foot"><a href="#" id="scLink"><svg class="sc-badge" viewBox="-6 -6 132 132" aria-hidden="true"><defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset=".55" stop-color="#ff7a1a"/><stop offset="1" stop-color="#e2531a"/></linearGradient><linearGradient id="hb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2f5e"/><stop offset="1" stop-color="#0d1833"/></linearGradient></defs><path d="M60 6L106 32V88L60 114L14 88V32Z" fill="url(#hb)" stroke="url(#hg)" stroke-width="4" stroke-linejoin="round"/><path d="M24 62H42L49 42L60 84L67 52L73 62H96" fill="none" stroke="url(#hg)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="62" r="4" fill="#e9edf6"/><circle cx="96" cy="62" r="4" fill="#e9edf6"/></svg><span>a <b>Signal</b><i>craft</i> app</span></a></footer>
 </main>
 
 <!-- ============ SESSION ============ -->
@@ -161,6 +162,11 @@
     <div class="row gap"><button class="btn" id="btnExport">Copy progress</button><button class="btn danger" id="btnReset">Reset progress</button></div>
     <p class="hint" id="dataOut"></p>
     <p class="hint">Version <span id="ver"></span></p>
+  </section>
+  <section class="card sc-about">
+    <svg class="sc-badge" viewBox="-6 -6 132 132" aria-hidden="true"><defs><linearGradient id="hg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset=".55" stop-color="#ff7a1a"/><stop offset="1" stop-color="#e2531a"/></linearGradient><linearGradient id="hb2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2f5e"/><stop offset="1" stop-color="#0d1833"/></linearGradient></defs><path d="M60 6L106 32V88L60 114L14 88V32Z" fill="url(#hb2)" stroke="url(#hg2)" stroke-width="4" stroke-linejoin="round"/><path d="M24 62H42L49 42L60 84L67 52L73 62H96" fill="none" stroke="url(#hg2)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="62" r="4" fill="#e9edf6"/><circle cx="96" cy="62" r="4" fill="#e9edf6"/></svg>
+    <div><h2 class="sc-word"><b>Signal</b><i>craft</i></h2><p class="sc-tagline">SOFTWARE THAT SPEAKS ELECTRONICS</p>
+    <p class="hint">Murmur is a Signalcraft app by jrshaack, a sibling of the ESP Toolkit. Today it studies your Pandora vault; the plan is a Signalcraft study platform where anyone names a subject and textbook and gets a study system built for them.</p></div>
   </section>
 </main>
 

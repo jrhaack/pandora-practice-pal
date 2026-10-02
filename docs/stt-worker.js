@@ -1,4 +1,4 @@
-// Pandora Practice Pal — on-device Whisper speech recognition (no key, no server).
+// Murmur — on-device Whisper speech recognition (no key, no server).
 // in: {type:'init', device} · {type:'run', id, pcm(Float32Array 16 kHz mono)}   out: {type:'ready', device} · {type:'progress', p} · {type:'text', id, text} · {type:'error', id?, message}
 let asr = null;
 const TF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/+esm';

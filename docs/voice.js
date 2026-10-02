@@ -1,4 +1,4 @@
-/* Pandora Practice Pal — voice output.
+/* Murmur — voice output.
    Natural voice: Kokoro (af_heart) generated on the phone in tts-worker.js, played through Web Audio.
    Every sentence is its own audio buffer, so the app always knows exactly where it is in the text:
    that position drives the word highlight, the auto-scroll and the 15-second rewind.

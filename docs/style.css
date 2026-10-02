@@ -1,4 +1,4 @@
-/* Pandora Practice Pal — "instrument cluster" UI.
+/* Murmur — "instrument cluster" UI.
    Layout: one column; glanceable type; every control a big target in the bottom third, reachable while the phone is mounted. */
 :root {
   --bg: #0d1117;          /* cabin night, blue-black */
@@ -196,3 +196,14 @@ a { color: var(--accent); }
 
 .spoken[data-hl="word"] .w.now { background: var(--accent); color: var(--accent-ink); }
 .spoken[data-hl="off"] .w { color: var(--fg); }
+
+/* ---- Murmur name + Signalcraft umbrella ---- */
+h1 .tag { display: block; font: 600 .62em/1.2 "Atkinson Hyperlegible", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent, #ffb547); }
+.sc-badge { width: 22px; height: 22px; flex: none; }
+.sc-foot { display: flex; justify-content: center; padding: 18px 0 28px; }
+.sc-foot a { display: inline-flex; align-items: center; gap: 8px; color: inherit; opacity: .75; text-decoration: none; font-size: .85rem; }
+.sc-foot b { font-weight: 700; } .sc-foot i, .sc-word i { font-style: normal; font-weight: 300; color: #ff7a1a; }
+.sc-about { display: flex; gap: 16px; align-items: flex-start; }
+.sc-about .sc-badge { width: 64px; height: 64px; }
+.sc-word { margin: 0; font-size: 1.5rem; letter-spacing: -.01em; } .sc-word b { font-weight: 700; }
+.sc-tagline { margin: 2px 0 8px; font-size: .68rem; letter-spacing: .18em; color: #ff7a1a; font-weight: 700; }

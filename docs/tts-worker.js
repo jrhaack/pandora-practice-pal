@@ -1,4 +1,4 @@
-// Pandora Practice Pal — Kokoro neural voice, generated on the phone (WebGPU) in a background worker.
+// Murmur — Kokoro neural voice, generated on the phone (WebGPU) in a background worker.
 // Messages in:  {type:'init', device, dtype} · {type:'gen', id, text, voice, speed}
 // Messages out: {type:'ready', device} · {type:'progress', p} · {type:'audio', id, pcm(Float32Array), sr} · {type:'error', id?, message}
 let tts = null, device = null;

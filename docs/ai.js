@@ -1,4 +1,4 @@
-/* Pandora Practice Pal — AI with a five-provider chain, plus offline Explain / Expand.
+/* Murmur — AI with a five-provider chain, plus offline Explain / Expand.
    Order: Gemini → Groq → Cerebras → OpenRouter → Mistral (every one has a free tier; any without a key is skipped).
    Hedged: if the first provider has not answered within 3.5 s, the next one is started too and the first good answer
    wins. Every call carries the whole conversation, so a switch mid-conversation is invisible: the next model just
@@ -31,7 +31,7 @@ const Brain = {
   async one(p, system, messages, signal) {
     const P = PROVIDERS[p]; const t0 = performance.now(); const model = await this.model(p);
     const headers = { 'content-type': 'application/json', Authorization: 'Bearer ' + this.key(p) };
-    if (p === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Pandora Practice Pal'; }
+    if (p === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Murmur'; }
     const r = await fetch(P.url, { method: 'POST', headers, signal, body: JSON.stringify({ model, max_tokens: 420, temperature: 0.5, messages: [{ role: 'system', content: system }, ...messages] }) });
     if (!r.ok) {
       const body = (await r.text()).slice(0, 160);
