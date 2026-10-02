@@ -6,14 +6,14 @@
 'use strict';
 const CLOUD = 'https://murmur-cloud.jrshaack.workers.dev';
 const PROVIDERS = {
-  signalcraft: { name: 'Murmur cloud (built in, no key)', builtin: true },
+  signalcraft: { name: 'Murmur cloud (built-in backup, no key)', builtin: true },
   gemini: { name: 'Google Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.5-flash', keys: 'https://aistudio.google.com/apikey', prefer: (ids) => { const v = id => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]); const f = ids.filter(id => /^gemini-\d/.test(id) && /flash/.test(id) && !/-\d{3,}$|image|tts|live|audio|thinking|exp/.test(id)); return [...f.filter(id => !/lite/.test(id)).sort((a, b) => v(b) - v(a)), ...f.filter(id => /lite/.test(id)).sort((a, b) => v(b) - v(a))]; } },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', keys: 'https://console.groq.com/keys', prefer: (ids) => ids.filter(id => /llama-3\.3-70b|gpt-oss-120b|llama-4/.test(id) && !/guard|whisper|tts/.test(id)) },
   cerebras: { name: 'Cerebras', url: 'https://api.cerebras.ai/v1/chat/completions', model: 'llama-3.3-70b', keys: 'https://cloud.cerebras.ai/', prefer: (ids) => ids.filter(id => /llama-3\.3-70b|gpt-oss-120b|qwen-3-235b|llama-4/.test(id)) },
   openrouter: { name: 'OpenRouter (free models)', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'meta-llama/llama-3.3-70b-instruct:free', keys: 'https://openrouter.ai/keys', prefer: (ids) => ids.filter(id => /:free$/.test(id) && /llama-3\.3-70b|deepseek|gemma-3-27b|qwen|mistral/.test(id)) },
   mistral: { name: 'Mistral', url: 'https://api.mistral.ai/v1/chat/completions', model: 'mistral-small-latest', keys: 'https://console.mistral.ai/api-keys', prefer: (ids) => ids.filter(id => /^mistral-(small|medium)-latest$/.test(id)) },
 };
-const CHAIN = ['signalcraft', 'gemini', 'groq', 'cerebras', 'openrouter', 'mistral'];
+const CHAIN = ['gemini', 'groq', 'cerebras', 'openrouter', 'mistral', 'signalcraft']; // your keys first, Murmur cloud last
 
 const Brain = {
   status: {}, // provider -> {ok, ms, err, model}
