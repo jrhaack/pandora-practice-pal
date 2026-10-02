@@ -129,7 +129,7 @@
       <option value="auto">Automatic (best available)</option>
       <option value="native">Built-in only (Chrome / installed app)</option>
       <option value="local">On-device Whisper (no key, works everywhere)</option>
-      <option value="groq">Whisper on Groq (needs the Groq key)</option>
+      <option value="groq">Whisper in the cloud (built in, no key)</option>
     </select></label>
     <div class="statusrow"><b id="micState"></b><small id="micWhy"></small></div>
     <div class="meter" id="sttMeter" hidden><i id="sttMeterBar"></i></div>
@@ -142,7 +142,7 @@
 
   <section class="card form">
     <h2 class="label">AI chain</h2>
-    <p class="hint">Used only for the AI button. Five free services are tried in order; if one is slow or down, the next one carries on the same conversation. One key is enough; more keys make it more reliable. Keys stay on this phone. The Groq key also powers the microphone in Firefox.</p>
+    <p class="hint">Works with no setup: Murmur's own free cloud answers first. Keys below are optional backups; if a service is slow or down, the next one carries on the same conversation. Keys stay on this phone.</p>
     <div id="keyRows"></div>
     <button class="btn" id="btnTestAI">Test the chain</button>
     <div class="keystatus" id="aiOut"></div>

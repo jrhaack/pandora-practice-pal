@@ -4,7 +4,7 @@
                   system's default microphone.
    2. on-device – Whisper running on this phone/computer (WebGPU, or WebAssembly in Firefox). No key, no server;
                   a ~80 MB model downloads once.
-   3. groq      – Whisper on Groq's free tier, if a Groq key is set.
+   3. cloud     – Whisper on the built-in Murmur cloud (no key), or on Groq if a Groq key is set.
    Engines 2 and 3 record from the microphone chosen in Settings, clean the sound (echo cancellation, noise
    suppression, auto gain), detect when you stop talking, and resample to 16 kHz mono PCM — no lossy codec. */
 'use strict';
@@ -22,11 +22,11 @@ const Ear = (() => {
     const w = want(), dev = !!settings.micId;
     if (w === 'native') return st.nativeOk ? 'native' : 'none';
     if (w === 'local') return canRecord() ? 'local' : 'none';
-    if (w === 'groq') return canRecord() && groqKey() ? 'groq' : 'none';
+    if (w === 'groq') return canRecord() ? 'groq' : 'none';
     // auto: built-in unless it failed here or a specific microphone was chosen (built-in cannot be pointed at one)
     if (st.nativeOk && !st.nativeBroken && !dev) return 'native';
     if (canRecord()) return 'local';
-    return groqKey() && canRecord() ? 'groq' : 'none';
+    return canRecord() ? 'groq' : 'none';
   }
 
   // ---------- built-in recogniser
@@ -126,8 +126,7 @@ const Ear = (() => {
     st.worker.postMessage({ type: 'init', device: dev });
   }
   async function transcribeLocal(pcm) {
-    if (st.local !== 'ready') { initLocal(); for (let i = 0; i < 600 && st.local === 'loading'; i++) await sleep(100); }
-    if (st.local !== 'ready') return null;
+    if (st.local !== 'ready') { initLocal(); return null; } // still downloading: the cloud answers this time
     const id = ++st.seq; st.worker.postMessage({ type: 'run', id, pcm }, [pcm.buffer]);
     return await new Promise(r => { st.waiters.set(id, r); setTimeout(() => { if (st.waiters.has(id)) { st.waiters.delete(id); r(null); } }, 15000); });
   }
@@ -141,14 +140,23 @@ const Ear = (() => {
       return String((await r.json()).text || '').trim() || null;
     } catch (e) { st.lastError = 'Groq transcription could not be reached.'; return null; }
   }
+  async function transcribeCloud(pcm) {
+    if (groqKey()) { const t = await transcribeGroq(pcm); if (t) return t; }
+    try {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 12000);
+      const r = await fetch(CLOUD + '/stt', { method: 'POST', body: wav(pcm), signal: ctl.signal });
+      clearTimeout(to); if (!r.ok) { st.lastError = 'Cloud transcription failed (' + r.status + ').'; return null; }
+      return String((await r.json()).text || '').trim() || null;
+    } catch (e) { st.lastError = 'Cloud transcription could not be reached.'; return null; }
+  }
   // Whisper hallucinates stock phrases on silence/noise — drop them
   const junk = (t) => !t || /^(\W*|you|thank you\.?|thanks for watching!?|\[.*\]|\(.*\))$/i.test(t.trim());
 
   async function listenRecorded(ms, engine) {
     const pcm = await capture(ms); if (!pcm) return null;
     UI.status && UI.status('Hearing', 'listen');
-    let text = engine === 'groq' ? await transcribeGroq(pcm) : await transcribeLocal(pcm.slice());
-    if (!text && engine === 'local' && groqKey()) text = await transcribeGroq(pcm);
+    let text = engine === 'groq' ? await transcribeCloud(pcm) : await transcribeLocal(pcm.slice());
+    if (!text && engine === 'local') text = await transcribeCloud(pcm);
     return junk(text) ? null : [text];
   }
 
@@ -156,7 +164,7 @@ const Ear = (() => {
     st, mode, initLocal, wav, capture,
     onChange(f) { st.listeners.add(f); },
     get available() { return settings.mic && mode() !== 'none'; },
-    get label() { return { native: 'Built-in speech recognition', local: 'On-device Whisper' + (st.local === 'ready' ? ' (' + st.localDevice + ')' : st.local === 'loading' ? ' (downloading ' + Math.round(st.localProgress) + '%)' : ''), groq: 'Whisper on Groq', none: 'Not available' }[mode()]; },
+    get label() { return { native: 'Built-in speech recognition', local: 'On-device Whisper' + (st.local === 'ready' ? ' (' + st.localDevice + ')' : st.local === 'loading' ? ' (downloading ' + Math.round(st.localProgress) + '%)' : ''), groq: 'Whisper in the cloud', none: 'Not available' }[mode()]; },
     async listen(ms = 7000) {
       if (!settings.mic) return null;
       const m = mode();

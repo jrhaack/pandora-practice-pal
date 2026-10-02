@@ -1,6 +1,6 @@
 /* Murmur — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -706,6 +706,7 @@ function renderKeys() {
   const box = $('keyRows'); box.innerHTML = '';
   CHAIN.forEach((p, i) => {
     const P = PROVIDERS[p]; const row = document.createElement('div'); row.className = 'keyrow';
+    if (P.builtin) { row.innerHTML = `<div class="keyhead"><span class="n">${i + 1}</span><b>${esc(P.name)}</b></div><label class="row"><input type="checkbox" id="cloudOn"${settings.noCloud ? '' : ' checked'}> On — nothing to set up</label>`; box.append(row); row.querySelector('input').onchange = (e) => { settings.noCloud = !e.target.checked; saveSettings(); }; return; }
     row.innerHTML = `<div class="keyhead"><span class="n">${i + 1}</span><b>${esc(P.name)}</b><a href="${P.keys}" target="_blank" rel="noopener">Get a free key</a></div><input type="password" id="key_${p}" autocomplete="off" placeholder="paste the ${esc(P.name)} key">`;
     box.append(row);
     const inp = row.querySelector('input'); inp.value = (settings.keys || {})[p] || '';

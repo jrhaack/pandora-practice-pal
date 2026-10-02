@@ -4,18 +4,20 @@
    wins. Every call carries the whole conversation, so a switch mid-conversation is invisible: the next model just
    continues. If every provider fails, the offline banks answer. */
 'use strict';
+const CLOUD = 'https://murmur-cloud.jrshaack.workers.dev';
 const PROVIDERS = {
+  signalcraft: { name: 'Murmur cloud (built in, no key)', builtin: true },
   gemini: { name: 'Google Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.5-flash', keys: 'https://aistudio.google.com/apikey', prefer: (ids) => { const v = id => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]); const f = ids.filter(id => /^gemini-\d/.test(id) && /flash/.test(id) && !/-\d{3,}$|image|tts|live|audio|thinking|exp/.test(id)); return [...f.filter(id => !/lite/.test(id)).sort((a, b) => v(b) - v(a)), ...f.filter(id => /lite/.test(id)).sort((a, b) => v(b) - v(a))]; } },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', keys: 'https://console.groq.com/keys', prefer: (ids) => ids.filter(id => /llama-3\.3-70b|gpt-oss-120b|llama-4/.test(id) && !/guard|whisper|tts/.test(id)) },
   cerebras: { name: 'Cerebras', url: 'https://api.cerebras.ai/v1/chat/completions', model: 'llama-3.3-70b', keys: 'https://cloud.cerebras.ai/', prefer: (ids) => ids.filter(id => /llama-3\.3-70b|gpt-oss-120b|qwen-3-235b|llama-4/.test(id)) },
   openrouter: { name: 'OpenRouter (free models)', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'meta-llama/llama-3.3-70b-instruct:free', keys: 'https://openrouter.ai/keys', prefer: (ids) => ids.filter(id => /:free$/.test(id) && /llama-3\.3-70b|deepseek|gemma-3-27b|qwen|mistral/.test(id)) },
   mistral: { name: 'Mistral', url: 'https://api.mistral.ai/v1/chat/completions', model: 'mistral-small-latest', keys: 'https://console.mistral.ai/api-keys', prefer: (ids) => ids.filter(id => /^mistral-(small|medium)-latest$/.test(id)) },
 };
-const CHAIN = ['gemini', 'groq', 'cerebras', 'openrouter', 'mistral'];
+const CHAIN = ['signalcraft', 'gemini', 'groq', 'cerebras', 'openrouter', 'mistral'];
 
 const Brain = {
   status: {}, // provider -> {ok, ms, err, model}
-  key(p) { return (settings.keys && settings.keys[p]) || ''; },
+  key(p) { if (PROVIDERS[p].builtin) return settings.noCloud ? '' : 'builtin'; return (settings.keys && settings.keys[p]) || ''; },
   active() { return CHAIN.filter(p => this.key(p)); },
   clean(t) { return String(t || '').replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim(); },
   async model(p) {
@@ -29,7 +31,14 @@ const Brain = {
     return P.model;
   },
   async one(p, system, messages, signal) {
-    const P = PROVIDERS[p]; const t0 = performance.now(); const model = await this.model(p);
+    const P = PROVIDERS[p]; const t0 = performance.now();
+    if (P.builtin) {
+      const r = await fetch(CLOUD + '/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, signal, body: JSON.stringify({ system, messages, max_tokens: 420 }) });
+      if (!r.ok) throw new Error(P.name + ' ' + r.status);
+      const j = await r.json(); const text = this.clean(j.text); if (!text) throw new Error(P.name + ' returned nothing');
+      this.status[p] = { ok: true, ms: Math.round(performance.now() - t0), model: j.model }; return { text, provider: p };
+    }
+    const model = await this.model(p);
     const headers = { 'content-type': 'application/json', Authorization: 'Bearer ' + this.key(p) };
     if (p === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Murmur'; }
     const r = await fetch(P.url, { method: 'POST', headers, signal, body: JSON.stringify({ model, max_tokens: 420, temperature: 0.5, messages: [{ role: 'system', content: system }, ...messages] }) });
