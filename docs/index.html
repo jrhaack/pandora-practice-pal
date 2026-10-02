@@ -1,146 +1,159 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Pandora Practice Pal</title>
-<meta name="description" content="Hands-free lectures and tutoring for DIGI 210, ELTR 238, MATH 237 and EFAB 202, built from the Pandora vault.">
-<meta name="theme-color" content="#101418">
+<meta name="description" content="Hands-free spoken lectures and voice tutoring for DIGI 210, ELTR 238, MATH 237 and EFAB 202, built from the Pandora vault.">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f2ea" media="(prefers-color-scheme: light)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Practice Pal">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <!-- ============ HOME ============ -->
 <main id="home" class="screen">
-  <header class="top">
-    <div>
-      <h1>Pandora Practice Pal</h1>
-      <p class="sub" id="bankInfo">Loading question bank…</p>
-    </div>
-    <button class="icon" id="btnSettings" aria-label="Settings">⚙</button>
+  <header class="appbar">
+    <div class="brand"><img src="icons/icon-192.png" alt="" width="40" height="40"><div><h1>Practice Pal</h1><p class="sub" id="bankInfo">Loading…</p></div></div>
+    <button class="iconbtn" id="btnSettings" aria-label="Settings"></button>
   </header>
 
-  <section class="block">
-    <div class="seg" role="tablist" aria-label="Mode">
-      <button class="segbtn on" data-mode="lecture" role="tab" aria-selected="true">Lecture</button>
-      <button class="segbtn" data-mode="tutor" role="tab" aria-selected="false">Tutor</button>
-    </div>
-    <p class="hint" id="modeHint">Lecture mode plays a spoken lecture. Say “explain” after any point to talk it through, then “resume”.</p>
+  <button class="voicechip" id="voiceChip" hidden></button>
+
+  <section class="resume" id="resumeCard" hidden>
+    <div class="resume-meta"><span class="eyebrow">Pick up where you left off</span><b id="resumeTitle"></b><small id="resumeSub"></small><div class="bar"><i id="resumeBar"></i></div></div>
+    <div class="resume-actions"><button class="primary" id="btnResume">Resume</button><button class="ghost" id="btnNew">New lecture</button></div>
   </section>
 
   <section class="block">
-    <h2 class="label">What to study</h2>
-    <div class="grid courses" id="courseGrid"></div>
+    <div class="seg big" role="tablist" aria-label="Mode">
+      <button class="segbtn" data-mode="lecture" role="tab">Lecture</button>
+      <button class="segbtn" data-mode="tutor" role="tab">Tutor</button>
+    </div>
+    <p class="hint" id="modeHint"></p>
+  </section>
+
+  <section class="block">
+    <h2 class="label">Study</h2>
+    <div class="courses" id="courseGrid"></div>
   </section>
 
   <section class="block" id="lectureOpts">
     <h2 class="label">Length</h2>
-    <div class="seg" id="lenSeg">
-      <button class="segbtn" data-len="10">10 min</button>
-      <button class="segbtn on" data-len="20">20 min</button>
-      <button class="segbtn" data-len="30">30 min</button>
-    </div>
-    <h2 class="label" style="margin-top:14px">Which lecture</h2>
-    <div class="seg" id="pickSeg">
-      <button class="segbtn on" data-pick="next">Next up</button>
-      <button class="segbtn" data-pick="lecture">By class</button>
-      <button class="segbtn" data-pick="topic">By topic</button>
-    </div>
+    <div class="seg" id="lenSeg"><button class="segbtn" data-len="10">10 min</button><button class="segbtn" data-len="20">20 min</button><button class="segbtn" data-len="30">30 min</button></div>
+    <h2 class="label">Which lecture</h2>
+    <div class="seg" id="pickSeg"><button class="segbtn" data-pick="resume">Resume</button><button class="segbtn" data-pick="random">New</button><button class="segbtn" data-pick="lecture">By class</button><button class="segbtn" data-pick="topic">By topic</button></div>
     <div id="pickList" class="picklist" hidden></div>
   </section>
 
-  <section class="block" id="tutorOpts" hidden>
-    <p class="hint" id="tutorPlan"></p>
-  </section>
+  <section class="block" id="tutorOpts" hidden><p class="hint" id="tutorPlan"></p></section>
 
   <div class="startwrap">
-    <button class="start" id="btnStart" disabled>Start</button>
-    <p class="hint center" id="startNote">Start before you drive. Everything after that is by voice or the big buttons.</p>
+    <button class="start" id="btnStart" disabled><span id="startLabel">Start</span></button>
+    <p class="hint center">Start while parked. After that, everything is by voice or the big buttons.</p>
   </div>
 
   <section class="block" id="statsBlock"></section>
 </main>
 
 <!-- ============ SESSION ============ -->
-<main id="session" class="screen" hidden>
-  <header class="top slim">
+<main id="session" class="screen session" hidden>
+  <header class="sessbar">
     <span class="chip" id="sessCourse">DIGI 210</span>
     <span class="status" id="sessStatus">Speaking</span>
     <span class="chip ghost" id="sessCount">0 / 0</span>
   </header>
-
   <div class="stage">
     <p class="kicker" id="stageKicker"></p>
-    <div class="spoken" id="spoken" aria-live="polite"></div>
+    <div class="spoken" id="spoken" aria-live="off"></div>
     <div class="options" id="optionBtns"></div>
     <p class="heard" id="heard"></p>
   </div>
-
-  <div class="controls">
-    <button class="ctl" id="cRepeat">↺<span>Repeat</span></button>
-    <button class="ctl accent" id="cExplain">?<span>Explain</span></button>
-    <button class="ctl" id="cPause">⏸<span>Pause</span></button>
-    <button class="ctl" id="cNext">→<span>Next</span></button>
-    <button class="ctl danger" id="cEnd">■<span>End</span></button>
-  </div>
+  <nav class="controls" aria-label="Playback">
+    <div class="row help">
+      <button class="ctl soft" id="cExplain"></button>
+      <button class="ctl soft" id="cExpand"></button>
+      <button class="ctl soft accent" id="cAI"></button>
+    </div>
+    <div class="row main">
+      <button class="ctl" id="cRepeat"></button>
+      <button class="ctl hero" id="cPause"></button>
+      <button class="ctl" id="cNext"></button>
+      <button class="ctl danger" id="cEnd"></button>
+    </div>
+  </nav>
 </main>
 
 <!-- ============ SUMMARY ============ -->
 <main id="summary" class="screen" hidden>
-  <header class="top"><h1>Drive done</h1></header>
+  <header class="appbar"><h1>Drive done</h1></header>
   <div id="summaryBody" class="block"></div>
   <div class="startwrap"><button class="start" id="btnHome">Back to start</button></div>
 </main>
 
 <!-- ============ SETTINGS ============ -->
 <main id="settings" class="screen" hidden>
-  <header class="top"><h1>Settings</h1><button class="icon" id="btnCloseSettings" aria-label="Close">✕</button></header>
-  <div class="block form">
-    <label>Speaking speed <output id="rateOut">1.0×</output><input type="range" id="rate" min="0.7" max="1.4" step="0.05" value="1"></label>
-    <label>Voice <select id="voiceSel"></select></label>
-    <label class="row"><input type="checkbox" id="micOn" checked> Listen for spoken answers (needs microphone permission)</label>
+  <header class="appbar"><h1>Settings</h1><button class="iconbtn" id="btnCloseSettings" aria-label="Close"></button></header>
+
+  <section class="card form">
+    <h2 class="label">Voice</h2>
+    <div class="statusrow"><b id="voiceState">System voice</b><small id="voiceWhy"></small></div>
+    <div class="meter" id="voiceMeter" hidden><i id="voiceMeterBar"></i></div>
+    <button class="btn primary" id="btnVoice">Download the natural voice (about 330 MB, once)</button>
+    <p class="hint">A neural voice that runs on your phone, so it works offline and costs nothing. Download on Wi-Fi. It needs Chrome or the installed app (WebGPU); other browsers use the phone's own voice.</p>
+    <label>Speaking speed <output id="rateOut">1.0×</output><input type="range" id="rate" min="0.8" max="1.3" step="0.05" value="1"></label>
+  </section>
+
+  <section class="card form">
+    <h2 class="label">Microphone</h2>
+    <div class="statusrow"><b id="micState"></b><small id="micWhy"></small></div>
+    <label class="row"><input type="checkbox" id="micOn" checked> Listen for spoken answers</label>
+    <label>Recognition <select id="earMode"><option value="auto">Automatic (built-in, Whisper as backup)</option><option value="whisper">Always Whisper (needs the Groq key)</option></select></label>
     <label class="row"><input type="checkbox" id="optionsAloud" checked> Read multiple-choice options aloud</label>
     <button class="btn" id="btnTestVoice">Test voice and microphone</button>
     <p class="hint" id="testOut"></p>
-  </div>
-  <div class="block form">
-    <h2 class="label">AI for “explain” conversations</h2>
-    <p class="hint">Used only when you say “explain”. Google Gemini and Groq have free tiers that need no card. Your key stays on this phone.</p>
-    <label>Provider <select id="provider"></select></label>
-    <p class="hint" id="keyLink"></p>
-    <label>API key <input type="password" id="apiKey" autocomplete="off" placeholder="paste your key"></label>
-    <label>Model (leave blank for the default) <input type="text" id="model"></label>
-    <label id="baseUrlRow" hidden>Base URL <input type="text" id="baseUrl" placeholder="https://…/v1"></label>
-    <button class="btn" id="btnTestAI">Test the AI</button>
-    <p class="hint" id="aiOut"></p>
-  </div>
-  <div class="block form">
+  </section>
+
+  <section class="card form">
+    <h2 class="label">AI chain</h2>
+    <p class="hint">Used only for the AI button. Five free services are tried in order; if one is slow or down, the next one carries on the same conversation. One key is enough; more keys make it more reliable. Keys stay on this phone. The Groq key also powers the microphone in Firefox.</p>
+    <div id="keyRows"></div>
+    <button class="btn" id="btnTestAI">Test the chain</button>
+    <div class="keystatus" id="aiOut"></div>
+  </section>
+
+  <section class="card form">
     <h2 class="label">Sync with the vault</h2>
-    <p class="hint">Progress is always saved on this phone. A fine-grained GitHub token (this repository only, Contents: Read and write) also sends your results back to the vault after each drive.</p>
+    <p class="hint">Progress is always saved on this phone. A fine-grained GitHub token (this repository only, Contents: Read and write) also sends your results to the vault after each drive.</p>
     <label>Repository <input type="text" id="ghRepo" placeholder="owner/repo"></label>
     <label>Token <input type="password" id="ghToken" autocomplete="off" placeholder="github_pat_…"></label>
     <div class="row gap"><button class="btn" id="btnSync">Sync now</button><button class="btn" id="btnRefresh">Check for new material</button></div>
     <p class="hint" id="syncOut"></p>
-  </div>
-  <div class="block form">
+  </section>
+
+  <section class="card form">
     <h2 class="label">Data</h2>
-    <div class="row gap"><button class="btn" id="btnExport">Copy progress JSON</button><button class="btn danger" id="btnReset">Reset progress</button></div>
+    <div class="row gap"><button class="btn" id="btnExport">Copy progress</button><button class="btn danger" id="btnReset">Reset progress</button></div>
     <p class="hint" id="dataOut"></p>
     <p class="hint">Version <span id="ver"></span></p>
-  </div>
+  </section>
 </main>
 
 <audio id="silence" loop preload="auto"></audio>
 <script src="parse.js"></script>
+<script src="voice.js"></script>
+<script src="ear.js"></script>
+<script src="ai.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

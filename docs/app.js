@@ -1,6 +1,6 @@
 /* Pandora Practice Pal — hands-free lecture + tutor app for the Pandora vault. */
 'use strict';
-const VERSION = '1.1.3';
+const VERSION = '2.0.0';
 const $ = (id) => document.getElementById(id);
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const DAY = 86400000;
@@ -11,9 +11,11 @@ const COURSE_VAR = { DIGI210: 'var(--digi)', ELTR238: 'var(--eltr)', MATH237: 'v
 // ------------------------------------------------------------------ storage
 function load(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } }
 function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* storage may be unavailable */ } }
-const settings = Object.assign({ rate: 1, voice: '', mic: true, optionsAloud: true, apiKey: '', model: '', provider: 'gemini', baseUrl: '', ghRepo: '', ghToken: '', len: 20, mode: 'lecture', course: 'FOCUS', pick: 'next' }, load('pp.settings', {}));
+const settings = Object.assign({ rate: 1, voice: '', mic: true, optionsAloud: true, apiKey: '', model: '', provider: 'gemini', baseUrl: '', keys: {}, models: {}, neuralVoice: false, earMode: 'auto', pick: 'resume', ghRepo: '', ghToken: '', len: 20, mode: 'lecture', course: 'FOCUS', pick: 'next' }, load('pp.settings', {}));
 const progress = Object.assign({ v: 1, items: {}, lessons: {}, lectures: {}, topics: {}, sessions: [], updated: 0 }, load('pp.progress', {}));
 const saveSettings = () => save('pp.settings', settings);
+if (settings.apiKey && !settings.keys[settings.provider || 'gemini']) { settings.keys[settings.provider || 'gemini'] = settings.apiKey; saveSettings(); } // carry the 1.x key over
+if (settings.pick === 'next') settings.pick = 'resume';
 const saveProgress = () => { progress.updated = Date.now(); save('pp.progress', progress); };
 
 // ------------------------------------------------------------------ bank
@@ -51,72 +53,7 @@ function focusScore(course, topic) {
 }
 
 // ------------------------------------------------------------------ speech: output
-const Voice = {
-  voices: [], cancelled: false, speaking: false,
-  init() { const pick = () => { this.voices = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang)); fillVoiceSelect(); }; pick(); speechSynthesis.onvoiceschanged = pick; },
-  rank(v) { // higher is better: neural / network voices first, then Google, then local defaults
-    let r = 0; const n = (v.name || '') + ' ' + (v.voiceURI || '');
-    if (/natural|neural|premium|enhanced|wavenet|journey|studio/i.test(n)) r += 40;
-    if (/network|-x-[a-z]{3}-network/i.test(n)) r += 30;
-    if (/google/i.test(n)) r += 20;
-    if (v.localService === false) r += 10;
-    if (/en[-_](CA|US)/i.test(v.lang)) r += 6; else if (/en[-_](GB|AU|IE|NZ)/i.test(v.lang)) r += 3;
-    if (/compact|espeak|eSpeak|local-lite|-x-[a-z]{3}-local$/i.test(n)) r -= 15;
-    return r;
-  },
-  voice() { return this.voices.find(v => v.voiceURI === settings.voice) || [...this.voices].sort((a, b) => this.rank(b) - this.rank(a))[0]; },
-  chunks(text) { // sentence groups of up to ~240 characters: fewer utterance boundaries = fewer robotic gaps
-    const sents = String(text).replace(/\s+/g, ' ').match(/[^]+?(?:[.!?]+["”]?(?=\s|$)|$)/g) || [text];
-    const out = []; let cur = '';
-    for (const se of sents) { if (cur && (cur + se).length > 240) { out.push(cur.trim()); cur = ''; } cur += se.trim() + ' '; }
-    if (cur.trim()) out.push(cur.trim());
-    return out;
-  },
-  async say(text, opts = {}) {
-    if (!('speechSynthesis' in window)) { await sleep(Math.min(8000, text.length * 40)); return true; }
-    this.cancelled = false; this.speaking = true;
-    speechSynthesis.cancel();
-    const v = this.voice();
-    for (const ch of this.chunks(text)) {
-      if (this.cancelled) break;
-      await new Promise((resolve) => {
-        const u = new SpeechSynthesisUtterance(ch.trim());
-        if (v) u.voice = v; u.rate = settings.rate; u.pitch = 1; u.lang = v ? v.lang : 'en-US';
-        let started = false; const t0 = Date.now(); const maxMs = 3000 + ch.length * 120 / settings.rate;
-        const fin = () => { clearInterval(guard); resolve(); };
-        u.onstart = () => { started = true; }; u.onend = fin; u.onerror = fin;
-        speechSynthesis.speak(u);
-        // Chrome sometimes never fires onend (cancelled or stalled utterances)
-        const guard = setInterval(() => { if (this.cancelled || (started && !speechSynthesis.speaking && !speechSynthesis.pending) || Date.now() - t0 > maxMs) fin(); }, 250);
-      });
-      if (opts.onChunk) opts.onChunk(ch);
-    }
-    this.speaking = false;
-    return !this.cancelled;
-  },
-  stop() { this.cancelled = true; try { speechSynthesis.cancel(); } catch (e) { } this.speaking = false; },
-};
-
-// ------------------------------------------------------------------ speech: input
-const Ear = {
-  rec: null, available: !!(window.SpeechRecognition || window.webkitSpeechRecognition), active: null,
-  listen(ms = 7000) {
-    if (!settings.mic || !this.available) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      const R = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const r = new R(); this.rec = r;
-      r.lang = 'en-US'; r.continuous = false; r.interimResults = false; r.maxAlternatives = 5;
-      let done = false;
-      const finish = (val) => { if (done) return; done = true; clearTimeout(t); try { r.stop(); } catch (e) { } this.rec = null; resolve(val); };
-      const t = setTimeout(() => { try { r.abort(); } catch (e) { } finish(null); }, ms);
-      r.onresult = (ev) => { const alts = []; for (const res of ev.results) for (let i = 0; i < res.length; i++) alts.push(res[i].transcript); finish(alts); };
-      r.onerror = (ev) => { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { settings.mic = false; saveSettings(); UI.note('Microphone blocked. Using buttons; allow the microphone in Chrome site settings to use voice.'); } finish(null); };
-      r.onend = () => finish(null);
-      try { r.start(); } catch (e) { finish(null); }
-    });
-  },
-  stop() { if (this.rec) { try { this.rec.abort(); } catch (e) { } } },
-};
+// Voice → voice.js · Ear → ear.js · Brain/Help/Tutorbot → ai.js
 
 // ------------------------------------------------------------------ session machinery
 // A waiter that resolves on: spoken alternatives (array), a button/command string, or timeout (null).
@@ -141,9 +78,9 @@ const Input = {
 
 const Session = {
   running: false, paused: false, silent: 0, mode: 'tutor', course: 'FOCUS', asked: 0, right: 0, log: [], startedAt: 0, queuedCmd: null, wake: null, pendingResume: null,
-  queueCmd(c) { this.queuedCmd = c; if (c === 'repeat' || c === 'skip' || c === 'expand' || typeof c === 'object') Voice.stop(); },
+  queueCmd(c) { this.queuedCmd = c; if (['repeat', 'skip', 'explain', 'expand', 'ai'].includes(c) || typeof c === 'object') Voice.stop(); },
   takeCmd() { const c = this.queuedCmd; this.queuedCmd = null; return c; },
-  pause() { if (!this.running || this.paused) return; this.paused = true; Voice.stop(); Ear.stop(); UI.status('Paused', 'paused'); UI.toggleCtl('cPause', true); setTimeout(() => this.pausedEar(), 400); },
+  pause() { if (!this.running || this.paused) return; this.paused = true; Voice.stop(); Ear.stop(); UI.status('Paused', 'paused'); UI.setPause(true); setTimeout(() => this.pausedEar(), 400); },
   async pausedEar() { // keep one ear open while paused so "resume" and "stop" still work by voice
     while (this.running && this.paused) {
       const alts = await Ear.listen(12000); if (!this.paused) break;
@@ -152,7 +89,7 @@ const Session = {
       if (c === 'resume') this.resume(); else if (c === 'stop') this.end();
     }
   },
-  resume() { if (!this.paused) return; this.paused = false; UI.toggleCtl('cPause', false); UI.status('Speaking'); if (this.pendingResume) { const r = this.pendingResume; this.pendingResume = null; r(); } },
+  resume() { if (!this.paused) return; this.paused = false; UI.setPause(false); UI.status('Speaking'); if (this.pendingResume) { const r = this.pendingResume; this.pendingResume = null; r(); } },
   async waitIfPaused() { if (this.paused) await new Promise(r => { this.pendingResume = r; }); },
   async autoPause() { this.silent = 0; await Voice.say('I have not heard you for a while, so I will pause. Say resume, or tap pause, when you are ready.'); this.pause(); await this.waitIfPaused(); },
   async wakeLock() { try { this.wake = await navigator.wakeLock.request('screen'); } catch (e) { } },
@@ -160,7 +97,7 @@ const Session = {
     this.running = true; this.paused = false; this.silent = 0; this.mode = mode; this.course = course; this.asked = 0; this.right = 0; this.log = []; this.startedAt = Date.now(); this.queuedCmd = null;
     UI.show('session'); $('sessCourse').textContent = course === 'MIX' ? 'Mix' : course === 'FOCUS' ? 'Focus' : courseName(course);
     $('sessCourse').style.borderColor = COURSE_VAR[course] || 'var(--line)';
-    this.wakeLock(); Media.start();
+    this.wakeLock(); Media.start(); Voice.unlock(); UI.setPause(false);
     try {
       if (mode === 'tutor') await Tutor.run(course);
       else await Lecture.run(course, opts);
@@ -171,7 +108,7 @@ const Session = {
   check() { if (!this.running) throw new Error('ended'); },
   finish() {
     if (this.wake) { try { this.wake.release(); } catch (e) { } this.wake = null; }
-    Media.stop(); Voice.stop(); Ear.stop();
+    Media.stop(); Voice.stop(); Ear.stop(); Ear.release();
     const minutes = Math.round((Date.now() - this.startedAt) / 60000);
     progress.sessions.push({ t: Date.now(), mode: this.mode, course: this.course, asked: this.asked, right: this.right, minutes });
     progress.sessions = progress.sessions.slice(-200);
@@ -203,12 +140,20 @@ function silentWav() { // 1 s of silence, 8 kHz mono
 }
 
 // Speak with live highlighting; returns false if interrupted by a command.
-async function speak(text, kicker) {
+async function speak(text, kicker, opts = {}) {
   Session.check(); await Session.waitIfPaused(); Session.check();
   UI.status('Speaking'); UI.stage(text, kicker);
-  const ok = await Voice.say(text, { onChunk: (ch) => UI.highlight(ch) });
+  const ok = await Voice.say(text, { startAt: opts.startAt || 0, onProgress: (at, len, cs, cl) => UI.highlightAt(at, len, cs, cl), onWait: (w) => UI.status(w ? 'Preparing voice' : 'Speaking') });
   Session.check();
   return ok;
+}
+// Explain / Expand / AI — available from every screen; ctx = {course,title,text,eli5,deep,expand}
+async function helpCmd(cmd, ctx, kicker) {
+  if (!ctx) return false;
+  if (cmd === 'explain') { await Help.explain(ctx, kicker); return true; }
+  if (cmd === 'expand') { await Help.expand(ctx, kicker); return true; }
+  if (cmd === 'ai') { await Tutorbot.converse(ctx, kicker); return true; }
+  return false;
 }
 // Listen for an utterance or a command; returns {cmd} | {alts:[...]} | null.
 async function hear(ms = 7000) {
@@ -285,18 +230,20 @@ const Tutor = {
         continue;
       }
       done.add(lesson.id);
-      const r = await speakThenWindow(lesson.teach, courseName(lesson.course) + ' · ' + lesson.title, 1500);
-      if (r && r.cmd) { const again = await this.handleLessonCmd(r.cmd, lesson); if (again === 'repeat') { await speak(lesson.teach, courseName(lesson.course) + ' · ' + lesson.title); } }
+      const lk = courseName(lesson.course) + ' · ' + lesson.title;
+      Session.ctx = { course: lesson.course, title: lesson.title, text: lesson.teach, eli5: lesson.eli5, deep: lesson.deep };
+      let ok = await speak(lesson.teach, lk); let cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat');
+      while (cmd) {
+        if (cmd === 'repeat') { const at = Math.max(0, Voice.lastPos - 15); ok = await speak(lesson.teach, lk, { startAt: ok ? 0 : at }); }
+        else if (await helpCmd(cmd, Session.ctx, lk)) { ok = true; }
+        else break;
+        cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat');
+      }
       let wrongs = 0;
       for (const id of lesson.items) { if (!byId[id] || !unlocked(byId[id])) continue; done.add(id); const res = await this.ask(byId[id]); if (res === 'wrong') { wrongs++; retry.push({ id, after: Session.asked + 4 }); } }
       progress.lessons[lesson.id] = { done: Date.now(), wrongs }; saveProgress();
       reviewBudget = Math.min(reviewBudget + 2, 4);
     }
-  },
-  async handleLessonCmd(cmd, lesson) {
-    if (cmd === 'expand') { await Expand.converse({ course: lesson.course, title: lesson.title, text: lesson.teach, expand: 'Give a second example and the reason behind the idea.' }); return null; }
-    if (cmd === 'repeat') return 'repeat';
-    return null;
   },
   readOptions(item) { return item.options.map((o, i) => 'Option ' + ['one', 'two', 'three', 'four'][i] + ': ' + o + '.').join(' '); },
   answerText(item) {
@@ -343,7 +290,7 @@ const Tutor = {
         if (c === 'hint') { hinted = true; await speak(item.hint, kicker); continue; }
         if (c === 'dontknow') { if (!hinted) { hinted = true; await speak('Here is a hint. ' + item.hint, kicker); continue; } return await this.reveal(item, null, kicker, isRetry); }
         if (c === 'skip') { UI.options(null); return 'skip'; }
-        if (c === 'expand') { await Expand.converse({ course: item.course, title: item.topic, text: item.concept + ' ' + item.hint, expand: 'Explain the underlying concept without giving away the answer to the current question.' }); await speak(qtext, kicker); continue; }
+        if (['explain', 'expand', 'ai'].includes(c)) { const L = lessonById[item.lesson] || {}; await helpCmd(c, { course: item.course, title: item.topic, text: L.teach || item.concept, eli5: L.eli5, deep: L.deep }, kicker); await speak(qtext, kicker); continue; }
         if (c === 'status') { await speak(`${Session.right} right out of ${Session.asked} so far.`, kicker); continue; }
         if (c === 'resume' || c === 'pause') continue;
         if (typeof c === 'object' && c.answer != null) { return await this.grade(item, { idx: c.answer, ok: c.answer === item.answer, said: 'tap' }, kicker, isRetry); }
@@ -381,8 +328,10 @@ const Tutor = {
   },
   async afterWrong(item, kicker) {
     // offer a deeper explanation without stalling: short window for "explain"
-    const r = await speakThenWindow('Say explain to go deeper, or we move on.', kicker, 2500);
-    if (r && r.cmd === 'expand') await Expand.converse({ course: item.course, title: item.topic, text: 'Question: ' + item.q + ' Correct answer: ' + this.answerText(item) + ' Why: ' + item.right + ' Concept: ' + item.concept, expand: 'The student answered this wrongly. Rebuild the concept from the ground up with a fresh example.' });
+    const L = lessonById[(item._orig || item).lesson] || {};
+    Session.ctx = { course: item.course, title: item.topic, text: 'Question: ' + item.q + ' Correct answer: ' + this.answerText(item) + ' Why: ' + item.right + ' Concept: ' + item.concept, eli5: L.eli5, deep: L.deep };
+    const r = await speakThenWindow('Say explain, expand, or A I for more, or we move on.', kicker, 2500);
+    if (r && r.cmd) await helpCmd(r.cmd, Session.ctx, kicker);
     UI.options(null); return 'wrong';
   },
   record(item, ok, isRetry) {
@@ -403,6 +352,9 @@ function pickOne(a) { return a[Math.floor(Math.random() * a.length)]; }
 const Lecture = {
   lecturesFor(course) { const cs = course === 'MIX' || course === 'FOCUS' ? COURSE_ORDER : [course]; return bank.lectures.filter(L => cs.includes(L.course)); },
   pos(key) { return (progress.lectures[key] || {}).seg || 0; },
+  resumable(course) { // the lecture part-way through, most recent first
+    return this.lecturesFor(course).filter(unlocked).filter(L => { const p = progress.lectures[L.id]; return p && p.seg > 0 && !p.done; }).sort((a, b) => (progress.lectures[b.id].last || 0) - (progress.lectures[a.id].last || 0))[0] || null;
+  },
   // Build the playlist of segments for this session
   playlist(course, opts) {
     const budget = (opts.len || settings.len) * 150; // words
@@ -411,12 +363,16 @@ const Lecture = {
     else if (opts.pick === 'topic' && opts.topic) {
       const [c, t] = opts.topic.split('|');
       for (const L of this.lecturesFor(c).filter(unlocked).sort((a, b) => a.unlock.localeCompare(b.unlock))) for (const s of L.segments) if (s.topic === t) segs.push({ ...s, L, key: 'topic:' + opts.topic });
+    } else if (opts.pick === 'random' || (opts.pick === 'resume' && !this.resumable(course))) {
+      let Ls = this.lecturesFor(course).filter(unlocked); const fresh = Ls.filter(L => !(progress.lectures[L.id] || {}).done && !this.pos(L.id));
+      const pool = course === 'FOCUS' ? (fresh.length ? fresh : Ls).sort((a, b) => Math.max(...b.segments.map(s => focusScore(b.course, s.topic))) - Math.max(...a.segments.map(s => focusScore(a.course, s.topic)))).slice(0, 4) : (fresh.length ? fresh : Ls);
+      const L = pool[Math.floor(Math.random() * pool.length)]; if (L) { progress.lectures[L.id] = { seg: 0, last: Date.now() }; segs = L.segments.map(s => ({ ...s, L, key: L.id })); }
     } else {
-      // next up: continue the last unfinished lecture, else the newest unlocked lecture not yet finished (focus: weakest topics first)
+      // resume: the lecture you were most recently part-way through
       let Ls = this.lecturesFor(course).filter(unlocked);
       const unfinished = Ls.filter(L => !(progress.lectures[L.id] || {}).done);
       if (course === 'FOCUS') unfinished.sort((a, b) => (Math.max(...b.segments.map(s => focusScore(b.course, s.topic))) - Math.max(...a.segments.map(s => focusScore(a.course, s.topic)))) || b.unlock.localeCompare(a.unlock));
-      else unfinished.sort((a, b) => ((this.pos(b.id) > 0) - (this.pos(a.id) > 0)) || a.unlock.localeCompare(b.unlock));
+      else unfinished.sort((a, b) => ((this.pos(b.id) > 0) - (this.pos(a.id) > 0)) || (((progress.lectures[b.id] || {}).last || 0) - ((progress.lectures[a.id] || {}).last || 0)) || a.unlock.localeCompare(b.unlock));
       Ls = unfinished.length ? unfinished : Ls;
       for (const L of Ls) for (const s of L.segments) segs.push({ ...s, L, key: L.id });
     }
@@ -432,20 +388,27 @@ const Lecture = {
     const list = this.playlist(course, opts);
     if (!list.length) { await speak('There is no lecture available for that choice yet.'); return; }
     const first = list[0];
-    await speak((first.index === 0 ? 'Lecture: ' : 'Continuing: ') + first.L.title + '. ' + courseName(first.L.course) + '. Tap explain during any point to talk it through, or say explain at a quick check.');
-    let sinceCheck = 0;
+    await speak((first.index === 0 ? 'Lecture: ' : 'Continuing: ') + first.L.title + '. ' + courseName(first.L.course) + '. Use repeat to go back fifteen seconds, and explain, expand or A I whenever you want more.');
+    let sinceCheck = 0; let startAt = 0; const durs = [];
     for (let k = 0; k < list.length; k++) {
       const s = list[k]; Session.check();
       $('sessCount').textContent = (s.index + 1) + ' / ' + s.total;
       const kicker = courseName(s.L.course) + ' · ' + s.L.title + ' · ' + s.title;
-      // speak the point; a button or headset press during it is picked up right after
-      let ok = await speak(s.text, kicker);
+      Session.ctx = { course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, eli5: s.eli5, deep: s.deep, expand: s.expand };
+      if (list[k + 1]) Voice.prefetch(list[k + 1].text);
+      let ok = await speak(s.text, kicker, { startAt }); startAt = 0;
       let cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat');
+      let jumpedBack = false;
       while (cmd) {
-        if (cmd === 'repeat') { ok = await speak(s.text, kicker); cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat'); continue; }
-        if (cmd === 'expand') { await Expand.converse({ course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, expand: s.expand }); await speak('Back to the lecture.', kicker); }
+        if (cmd === 'repeat') {                                        // back 15 seconds, into the previous point if needed
+          const back = (ok ? Voice.durationOf(s.text) : Voice.lastPos) - 15;
+          if (back >= 0 || k === 0) { ok = await speak(s.text, kicker, { startAt: Math.max(0, back) }); cmd = ok ? Session.takeCmd() : (Session.takeCmd() || 'repeat'); continue; }
+          startAt = Math.max(0, Voice.durationOf(list[k - 1].text) + back); k -= 2; jumpedBack = true; break;
+        }
+        if (await helpCmd(cmd, Session.ctx, kicker)) { await speak('Back to the lecture.', kicker); }
         cmd = null;
       }
+      if (jumpedBack) continue;
       sinceCheck++;
       const isLast = s.index + 1 >= s.total;
       // quick check on what was just said: after every second point, and always at the end of a lecture
@@ -472,7 +435,7 @@ const Lecture = {
       if (r.cmd) {
         const k = r.cmd;
         if (k === 'repeat') { await speak(qtext, kicker); continue; }
-        if (k === 'expand') { await Expand.converse({ course: s.L.course, title: s.L.title + ' — ' + s.title, text: s.text, expand: s.expand }); await speak(qtext, kicker); continue; }
+        if (['explain', 'expand', 'ai'].includes(k)) { await helpCmd(k, Session.ctx, kicker); await speak(qtext, kicker); continue; }
         if (k === 'dontknow' || k === 'hint') { await this.checkWrong(s, fake, kicker, true); return; }
         if (k === 'skip') { UI.options(null); return; }
         if (typeof k === 'object' && k.answer != null) { return await this.checkGrade(s, fake, k.answer === answer, { idx: k.answer }, kicker); }
@@ -500,110 +463,6 @@ const Lecture = {
     await speak((reveal ? '' : 'Not quite. ') + ans + ' Let me go over that again. ' + c.again, kicker);
     UI.options(null);
   },
-};
-
-// ------------------------------------------------------------------ EXPLAIN (AI conversation)
-const Expand = {
-  async converse(ctx) {
-    const kicker = courseName(ctx.course) + ' · explain';
-    if (!settings.apiKey || settings.provider === 'none') {
-      await speak('A little more on that. ' + (ctx.expand || ctx.text) + ' For a real back-and-forth, add a free AI key in settings.', kicker);
-      return;
-    }
-    const sys = `You are a spoken tutor for a first-term Electronics Engineering Technology student. Course: ${courseName(ctx.course)} (${bank.courses[ctx.course].long}). The student is DRIVING and hears you through text-to-speech, so: plain spoken English only, no symbols, no lists, no markdown, no equations in notation. Say formulas in words and name each quantity and its unit before using numbers. Keep each reply under 120 words unless asked for more. Stay within the level of the material given; if a question goes beyond it, say so briefly and answer at an introductory level. Never invent course rules or dates.
-Lecture point just heard: "${ctx.title}": ${ctx.text}
-Note for going deeper: ${ctx.expand || ''}`;
-    const turns = [];
-    await speak('What would you like to know about that?', kicker);
-    let silence = 0;
-    while (Session.running) {
-      const r = await hear(9000);
-      if (!r) { silence++; if (silence >= 2) break; await speak('Ask a question, or say resume.', kicker); continue; }
-      if (r.cmd) { if (r.cmd === 'resume' || r.cmd === 'skip' || r.cmd === 'stop') break; if (r.cmd === 'repeat' && turns.length) { await speak(turns[turns.length - 1].content, kicker); } continue; }
-      const q = r.alts[0]; UI.heard(q);
-      if (/^(no|nothing|that'?s all|i'?m good|resume|continue|go on|carry on)\b/i.test(q.trim())) break;
-      turns.push({ role: 'user', content: q });
-      UI.status('Thinking'); UI.stage('…', kicker);
-      let reply;
-      try { reply = await this.ask(sys, turns); } catch (e) { reply = 'The AI did not answer. ' + this.explain(e) + ' Let us carry on.'; turns.pop(); await speak(reply, kicker); break; }
-      turns.push({ role: 'assistant', content: reply });
-      await speak(reply, kicker);
-      await speak('Anything else, or resume?', kicker);
-    }
-  },
-  // With no model set, ask the provider which models exist and pick a current, fast, free-tier one.
-  async pickModel(P) {
-    if (settings.model) return settings.model;
-    if (settings.modelAuto && settings.modelAutoFor === settings.provider) return settings.modelAuto;
-    const list = await this.candidates(P); if (list.length) { settings.modelAuto = list[0]; settings.modelAutoFor = settings.provider; saveSettings(); return list[0]; }
-    return P.model;
-  },
-  // ordered list of usable model ids from the provider's /models endpoint
-  async candidates(P) {
-    if (this._cands && this._candsFor === settings.provider) return this._cands;
-    const base = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') : P.url.replace(/\/chat\/completions$/, '');
-    try {
-      const r = await fetch(base + '/models', { headers: { Authorization: 'Bearer ' + settings.apiKey } });
-      if (r.ok) {
-        const j = await r.json(); const ids = (j.data || []).map(m => String(m.id).replace(/^models\//, ''));
-        const good = ids.filter(id => !/embed|image|tts|audio|live|vision-only|whisper|guard|moderation|realtime|preview-\d|exp\b|thinking/i.test(id));
-        let pref;
-        if (settings.provider === 'gemini') { const flash = good.filter(id => /^gemini-\d/.test(id) && /flash/i.test(id) && !/-\d{3,}$/.test(id)); const ver = id => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]); const main = flash.filter(id => !/lite|8b/i.test(id)).sort((a, b) => ver(b) - ver(a) || a.length - b.length); const lite = flash.filter(id => /lite|8b/i.test(id)).sort((a, b) => ver(b) - ver(a) || a.length - b.length); pref = [...main, ...lite]; }
-        else if (settings.provider === 'groq') pref = good.filter(id => /llama.*versatile|llama-3\.\d-70b|llama-3\.\d-8b/i.test(id)).sort().reverse();
-        else if (settings.provider === 'openrouter') pref = good.filter(id => /:free$/.test(id) && /gemma|llama|qwen|mistral/i.test(id));
-        else pref = good.filter(id => /mini|flash|small/i.test(id)).sort().reverse();
-        this._cands = [...new Set([...pref, ...good])].slice(0, 8); this._candsFor = settings.provider; return this._cands;
-      }
-    } catch (e) { /* fall through to the default */ }
-    this._cands = P.model ? [P.model] : []; this._candsFor = settings.provider; return this._cands;
-  },
-  explain(e) {
-    const m = String(e && e.message || e);
-    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Could not reach the AI service from this phone (no data, or the request was blocked).';
-    if (/401|403|API_KEY_INVALID|invalid.*key/i.test(m)) return 'The AI service rejected the key. Check it was pasted completely and belongs to the chosen provider.';
-    if (/404|not found|does not exist/i.test(m)) return 'The AI service says that model does not exist (' + m.slice(0, 140) + '). Clear the Model box so the app picks one automatically, or type a current model id.';
-    if (/limit: 0|limit":0|limit: "0"/i.test(m)) return 'This key has no free quota for that model (Google reports a limit of 0). ' + m.slice(0, 200);
-    if (/429|quota|rate/i.test(m)) return 'Rate limit or quota hit; wait a minute and try again. ' + m.slice(0, 220);
-    if (/503|UNAVAILABLE|high demand|overloaded/i.test(m)) return 'The AI service is overloaded right now on every model it tried; try again in a minute. ' + m.slice(0, 160);
-    return m;
-  },
-  async ask(system, messages) {
-    const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; const model = settings.provider === 'anthropic' ? (settings.model || P.model) : await this.pickModel(P);
-    if (settings.provider !== 'anthropic') {
-      // try the chosen model, then the next candidates when a model is missing (404) or has no free quota (429)
-      const tried = [model]; let lastErr = null;
-      const cands = settings.model ? [] : (await this.candidates(P)).filter(m => m !== model);
-      for (const m of [model, ...cands.slice(0, 4)]) {
-        try { const r = await this._chat(P, m, system, messages); if (m !== model) { settings.modelAuto = m; saveSettings(); } return r; }
-        catch (e) { lastErr = e; if (!/API (404|429|500|502|503|529)/.test(String(e.message))) throw e; tried.push(m); }
-      }
-      throw new Error(String(lastErr && lastErr.message) + ' [tried: ' + [...new Set(tried)].join(', ') + ']');
-    }
-    let res, text;
-    res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 400, system, messages }) });
-    if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 160));
-    const j = await res.json(); text = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join(' ');
-    return this.clean(text);
-  },
-  clean(text) { return String(text).replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim() || 'No answer came back.'; },
-  // OpenAI-compatible chat; on a 404 (model gone) with an auto-picked model, forget the pick and retry once with a fresh list
-  async _chat(P, model, system, messages) {
-    const url = settings.provider === 'custom' ? settings.baseUrl.replace(/\/+$/, '') + '/chat/completions' : P.url;
-    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + settings.apiKey, ...(settings.provider === 'openrouter' ? { 'HTTP-Referer': location.origin, 'X-Title': 'Pandora Practice Pal' } : {}) },
-      body: JSON.stringify({ model, max_tokens: 400, messages: [{ role: 'system', content: system }, ...messages] }) });
-    if (!res.ok) throw new Error('API ' + res.status + ' ' + (await res.text()).slice(0, 200));
-    const j = await res.json();
-    return this.clean((((j.choices || [])[0] || {}).message || {}).content || '');
-  },
-};
-const PROVIDERS = {
-  gemini: { name: 'Google Gemini (free tier)', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.5-flash', keys: 'https://aistudio.google.com/apikey' },
-  groq: { name: 'Groq (free tier)', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', keys: 'https://console.groq.com/keys' },
-  openrouter: { name: 'OpenRouter (free models)', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'google/gemma-3-27b-it:free', keys: 'https://openrouter.ai/keys' },
-  openai: { name: 'OpenAI', url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keys: 'https://platform.openai.com/api-keys' },
-  anthropic: { name: 'Anthropic', url: '', model: 'claude-haiku-4-5', keys: 'https://console.anthropic.com/' },
-  custom: { name: 'Custom (OpenAI-compatible)', url: '', model: '', keys: '' },
-  none: { name: 'Off (read the prepared note)', url: '', model: '', keys: '' },
 };
 
 // ------------------------------------------------------------------ SYNC (GitHub contents API)
@@ -655,7 +514,27 @@ const UI = {
   show(id) { for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id; window.scrollTo(0, 0); },
   status(text, cls) { const el = $('sessStatus'); el.textContent = text; el.className = 'status' + (cls ? ' ' + cls : ''); },
   toggleCtl(id, on) { $(id).classList.toggle('on', !!on); },
-  stage(text, kicker) { $('stageKicker').textContent = kicker || ''; $('spoken').textContent = text; $('heard').textContent = ''; this._full = text; },
+  stage(text, kicker) {
+    $('stageKicker').textContent = kicker || ''; $('heard').textContent = '';
+    if (this._full === text && $('spoken').childNodes.length) return;   // same block (rewind): keep the layout, just move the highlight
+    this._full = text; const el = $('spoken'); el.textContent = ''; el.scrollTop = 0; this._words = [];
+    const re = /\S+/g; let m, last = 0;
+    while ((m = re.exec(text))) { if (m.index > last) el.append(text.slice(last, m.index)); const sp = document.createElement('span'); sp.className = 'w'; sp.textContent = m[0]; el.append(sp); this._words.push({ at: m.index, el: sp }); last = m.index + m[0].length; }
+    this._cur = -1; this._sent = [];
+  },
+  highlightAt(at, len, cStart, cLen) {
+    const ws = this._words || []; let i = this._cur;
+    if (i < 0 || !ws[i] || ws[i].at > at) i = 0;
+    while (i + 1 < ws.length && ws[i + 1].at <= at) i++;
+    if (i === this._cur && this._sentKey === cStart) return;
+    if (this._sentKey !== cStart) { for (const s of this._sent) s.classList.remove('s'); this._sent = ws.filter(w => w.at >= cStart && w.at < cStart + cLen).map(w => w.el); for (const s of this._sent) s.classList.add('s'); this._sentKey = cStart; }
+    if (ws[this._cur]) ws[this._cur].el.classList.remove('now');
+    for (let j = 0; j < ws.length; j++) ws[j].el.classList.toggle('past', j < i);
+    this._cur = i; const w = ws[i]; if (!w) return; w.el.classList.add('now');
+    const box = $('spoken'); const target = w.el.offsetTop - box.offsetTop - box.clientHeight * 0.38;
+    if (Math.abs(box.scrollTop - target) > 8) box.scrollTo({ top: Math.max(0, target), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  },
+  setPause(p) { const b = $('cPause'); b.classList.toggle('on', !!p); b.innerHTML = (p ? ICON.play + '<span>Play</span>' : ICON.pause + '<span>Pause</span>'); b.setAttribute('aria-label', p ? 'Play' : 'Pause'); },
   highlight(chunk) { const full = this._full || ''; const i = full.indexOf(chunk.trim()); if (i < 0) return; const el = $('spoken'); el.textContent = ''; el.append(full.slice(0, i)); const b = document.createElement('span'); b.className = 'now'; b.textContent = chunk.trim(); el.append(b, full.slice(i + chunk.trim().length)); try { b.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { } },
   heard(t) { $('heard').textContent = t ? 'Heard: “' + t + '”' : ''; },
   count() { $('sessCount').textContent = Session.right + ' / ' + Session.asked; },
@@ -683,15 +562,28 @@ const UI = {
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ------------------------------------------------------------------ HOME wiring
+const ICON = {
+  back15: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5V2L6 6l5 4V7a6 6 0 1 1-6 6H3a8 8 0 1 0 8-8z"/><text x="12" y="16.2" text-anchor="middle" font-size="6.6" font-weight="700" font-family="Atkinson Hyperlegible,system-ui">15</text></svg>',
+  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>',
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2z"/></svg>',
+  next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.2v11.6a1 1 0 0 0 1.55.83L15 13v4.8a1 1 0 0 0 2 0V6.2a1 1 0 0 0-2 0V11L6.55 5.37A1 1 0 0 0 5 6.2z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  explain: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-4 12.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26A7 7 0 0 0 12 2zm-2 18h4v1a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-1z"/></svg>',
+  expand: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v2H4zm0 4h16v2H4zm0 4h10v2H4zm0 4h10v2H4zm13-3 4 3-4 3z"/></svg>',
+  ai: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm4 6.5a1.5 1.5 0 1 0 0 .01zm4 0a1.5 1.5 0 1 0 0 .01zm4 0a1.5 1.5 0 1 0 0 .01z"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>',
+  close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6 10.6 12 5 6.4z"/></svg>',
+};
+
 function renderHome() {
-  const asOf = bank.asOf; const n = bank.items.filter(unlocked).length;
-  $('bankInfo').textContent = `${n} questions · ${bank.lectures.filter(unlocked).length} lectures · updated ${asOf}`;
+  const n = bank.items.filter(unlocked).length;
+  $('bankInfo').textContent = `${n} questions · ${bank.lectures.filter(unlocked).length} lectures · ${bank.asOf}`;
   const grid = $('courseGrid'); grid.innerHTML = '';
-  const cards = [...COURSE_ORDER.map(c => ({ id: c, b: bank.courses[c].name, s: bank.courses[c].long })), { id: 'MIX', b: 'Mix', s: 'All four, weighted' }, { id: 'FOCUS', b: 'Focus pack', s: focusLabel() }];
+  const cards = [...COURSE_ORDER.map(c => ({ id: c, b: bank.courses[c].name, s: bank.courses[c].long })), { id: 'MIX', b: 'Mix', s: 'All four, weighted' }, { id: 'FOCUS', b: 'Focus', s: focusLabel() }];
   for (const c of cards) {
     const b = document.createElement('button'); b.className = 'course' + (settings.course === c.id ? ' on' : ''); b.style.setProperty('--c', COURSE_VAR[c.id]);
-    const pct = coursePct(c.id);
-    b.innerHTML = `<b>${esc(c.b)}</b><small>${esc(c.s)}</small><div class="prog"><i style="width:${pct}%"></i></div>`;
+    b.setAttribute('aria-pressed', settings.course === c.id);
+    b.innerHTML = `<b>${esc(c.b)}</b><small>${esc(c.s)}</small><span class="ring" style="--p:${coursePct(c.id)}"></span>`;
     b.onclick = () => { settings.course = c.id; saveSettings(); renderHome(); renderPick(); };
     grid.append(b);
   }
@@ -699,22 +591,35 @@ function renderHome() {
   document.querySelectorAll('[data-len]').forEach(b => b.classList.toggle('on', +b.dataset.len === settings.len));
   document.querySelectorAll('[data-pick]').forEach(b => b.classList.toggle('on', b.dataset.pick === settings.pick));
   $('lectureOpts').hidden = settings.mode !== 'lecture'; $('tutorOpts').hidden = settings.mode !== 'tutor';
-  $('modeHint').textContent = settings.mode === 'lecture' ? 'Lecture mode plays a spoken lecture. Say “explain” after any point to talk it through, then “resume”.' : 'Tutor mode teaches a short point, then asks. Say the option number, true or false, or the value with its unit.';
-  if (settings.mode === 'tutor') { const due = Tutor.dueItems(settings.course).length; const next = Tutor.nextLesson(settings.course, new Set()); $('tutorPlan').textContent = `${due} due for review` + (next ? ` · next new lesson: ${courseName(next.course)} — ${next.title}` : ' · no new lessons left; review only'); }
+  $('modeHint').textContent = settings.mode === 'lecture' ? 'A spoken lecture with a quick question every two points. Repeat goes back 15 seconds.' : 'A short point, then questions. Answer with the option number, true or false, or the value and its unit.';
+  if (settings.mode === 'tutor') { const due = Tutor.dueItems(settings.course).length; const next = Tutor.nextLesson(settings.course, new Set()); $('tutorPlan').textContent = `${due} due for review` + (next ? ` · next: ${courseName(next.course)} — ${next.title}` : ' · review only'); }
+  // resume card
+  const R = settings.mode === 'lecture' ? Lecture.resumable(settings.course) : null;
+  $('resumeCard').hidden = !R;
+  if (R) { const p = progress.lectures[R.id]; $('resumeTitle').textContent = R.title; $('resumeSub').textContent = `${courseName(R.course)} · ${R.class} · point ${p.seg + 1} of ${R.segments.length}`; $('resumeBar').style.width = Math.round(100 * p.seg / R.segments.length) + '%'; }
+  $('startLabel').textContent = settings.mode === 'tutor' ? 'Start tutoring' : settings.pick === 'resume' ? (R ? 'Resume lecture' : 'Start a lecture') : settings.pick === 'random' ? 'Start a new lecture' : 'Start';
   $('btnStart').disabled = false;
-  renderStats();
+  renderVoiceChip(); renderStats();
 }
-function focusLabel() { const q = (bank.focus.quizzes || []).filter(q => q.date >= todayISO())[0]; return q ? `Quiz ${q.date}: ${courseName(q.course)}` : 'Weak topics first'; }
+function renderVoiceChip() {
+  const st = Voice.st; const chip = $('voiceChip');
+  if (st.neural === 'ready') { chip.hidden = true; return; }
+  chip.hidden = false;
+  if (st.neural === 'loading') { chip.textContent = 'Downloading the natural voice · ' + Math.round(st.progress) + '%'; chip.disabled = true; }
+  else if (st.why === 'nogpu') { chip.textContent = 'Natural voice needs Chrome or the installed app · using the phone voice'; chip.disabled = true; }
+  else { chip.textContent = 'Get the natural voice (330 MB, once, on Wi-Fi)'; chip.disabled = false; }
+}
+function focusLabel() { const q = (bank.focus.quizzes || []).filter(q => q.date >= todayISO())[0]; return q ? `Quiz ${q.date.slice(5)} · ${courseName(q.course)}` : 'Weak topics first'; }
 function coursePct(id) { const cs = id === 'MIX' || id === 'FOCUS' ? COURSE_ORDER : [id]; const ls = bank.lessons.filter(l => cs.includes(l.course) && unlocked(l)); if (!ls.length) return 0; return Math.round(100 * ls.filter(l => progress.lessons[l.id]).length / ls.length); }
 function renderPick() {
-  const box = $('pickList'); box.innerHTML = ''; box.hidden = settings.pick === 'next';
-  if (settings.pick === 'next') return;
+  const box = $('pickList'); box.innerHTML = ''; box.hidden = !(settings.pick === 'lecture' || settings.pick === 'topic');
+  if (box.hidden) return;
   const cs = settings.course === 'MIX' || settings.course === 'FOCUS' ? COURSE_ORDER : [settings.course];
   if (settings.pick === 'lecture') {
     for (const L of bank.lectures.filter(L => cs.includes(L.course))) {
       const b = document.createElement('button'); const lock = !unlocked(L); const p = progress.lectures[L.id] || {};
       b.className = 'pick' + (settings.pickId === L.id ? ' on' : '') + (lock ? ' locked' : ''); b.disabled = lock;
-      b.innerHTML = `<span>${esc(courseName(L.course))} · ${esc(L.class)}: ${esc(L.title)}</span><small>${lock ? 'after class' : p.done ? 'done' : p.seg ? 'at ' + p.seg + '/' + L.segments.length : Math.round(L.words / 150) + ' min'}</small>`;
+      b.innerHTML = `<span>${esc(courseName(L.course))} · ${esc(L.class)}: ${esc(L.title)}</span><small>${lock ? 'after class' : p.done ? 'done' : p.seg ? 'point ' + p.seg + '/' + L.segments.length : Math.round(L.words / 150) + ' min'}</small>`;
       b.onclick = () => { settings.pickId = L.id; saveSettings(); renderPick(); }; box.append(b);
     }
   } else {
@@ -734,44 +639,75 @@ function renderStats() {
   if (weak.length) html += '<div class="weak">' + weak.map(([k, r, n]) => { const [c, t] = k.split('|'); return `<span>${esc(courseName(c))} · ${esc(t)}<small>${Math.round(100 * (1 - r))}% of ${n}</small></span>`; }).join('') + '</div>';
   $('statsBlock').innerHTML = html;
 }
-function fillVoiceSelect() { const sel = $('voiceSel'); if (!sel) return; sel.innerHTML = '<option value="">Automatic</option>' + Voice.voices.map(v => `<option value="${esc(v.voiceURI)}" ${v.voiceURI === settings.voice ? 'selected' : ''}>${esc(v.name)} (${v.lang})</option>`).join(''); }
+function renderSettings() {
+  const st = Voice.st;
+  $('voiceState').textContent = st.neural === 'ready' ? 'Natural voice ready' : st.neural === 'loading' ? 'Downloading the natural voice' : 'Using the phone’s voice';
+  $('voiceWhy').textContent = st.neural === 'ready' ? 'Kokoro · generated on this phone (' + (st.device || 'webgpu') + ')' : st.why === 'nogpu' ? 'This browser has no WebGPU. Use Chrome or the installed app for the natural voice.' : st.neural === 'failed' ? 'It could not load: ' + String(st.why || '').slice(0, 120) : '';
+  $('voiceMeter').hidden = st.neural !== 'loading'; $('voiceMeterBar').style.width = Math.round(st.progress) + '%';
+  $('btnVoice').hidden = st.neural === 'ready' || st.why === 'nogpu'; $('btnVoice').disabled = st.neural === 'loading';
+  $('micState').textContent = Ear.label;
+  $('micWhy').textContent = Ear.st.nativeOk ? (Ear.st.nativeBroken ? 'The built-in recogniser failed here, so Whisper is used.' : '') : 'This browser has no built-in speech recognition, so answers are recorded and transcribed by Whisper on Groq.';
+}
+function renderKeys() {
+  const box = $('keyRows'); box.innerHTML = '';
+  CHAIN.forEach((p, i) => {
+    const P = PROVIDERS[p]; const row = document.createElement('div'); row.className = 'keyrow';
+    row.innerHTML = `<div class="keyhead"><span class="n">${i + 1}</span><b>${esc(P.name)}</b><a href="${P.keys}" target="_blank" rel="noopener">Get a free key</a></div><input type="password" id="key_${p}" autocomplete="off" placeholder="paste the ${esc(P.name)} key">`;
+    box.append(row);
+    const inp = row.querySelector('input'); inp.value = (settings.keys || {})[p] || '';
+    inp.onchange = () => { settings.keys = settings.keys || {}; settings.keys[p] = inp.value.trim(); delete (settings.models || {})[p]; saveSettings(); renderSettings(); };
+  });
+}
 
 function wire() {
+  $('btnSettings').innerHTML = ICON.gear; $('btnCloseSettings').innerHTML = ICON.close;
+  $('cRepeat').innerHTML = ICON.back15 + '<span>Back 15 s</span>'; $('cNext').innerHTML = ICON.next + '<span>Next</span>'; $('cEnd').innerHTML = ICON.stop + '<span>End</span>';
+  $('cExplain').innerHTML = ICON.explain + '<span>Explain</span>'; $('cExpand').innerHTML = ICON.expand + '<span>Expand</span>'; $('cAI').innerHTML = ICON.ai + '<span>AI</span>';
+  UI.setPause(false);
   document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { settings.mode = b.dataset.mode; saveSettings(); renderHome(); renderPick(); });
   document.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { settings.len = +b.dataset.len; saveSettings(); renderHome(); });
   document.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { settings.pick = b.dataset.pick; saveSettings(); renderHome(); renderPick(); });
-  $('btnStart').onclick = () => {
-    if (settings.mode === 'lecture') Session.start('lecture', settings.course, { len: settings.len, pick: settings.pick, id: settings.pickId, topic: settings.pickTopic });
-    else Session.start('tutor', settings.course);
-  };
+  const go = (pick) => { Voice.unlock(); if (settings.mode === 'lecture') Session.start('lecture', settings.course, { len: settings.len, pick: pick || settings.pick, id: settings.pickId, topic: settings.pickTopic }); else Session.start('tutor', settings.course); };
+  $('btnStart').onclick = () => go();
+  $('btnResume').onclick = () => go('resume');
+  $('btnNew').onclick = () => go('random');
+  $('voiceChip').onclick = () => { Voice.initNeural(true); };
   $('btnHome').onclick = () => { renderHome(); renderPick(); UI.show('home'); };
   $('cRepeat').onclick = () => Input.push('repeat');
-  $('cExplain').onclick = () => Input.push('expand');
+  $('cExplain').onclick = () => Input.push('explain');
+  $('cExpand').onclick = () => Input.push('expand');
+  $('cAI').onclick = () => Input.push('ai');
   $('cNext').onclick = () => Input.push('skip');
   $('cPause').onclick = () => { Session.paused ? Session.resume() : Session.pause(); };
   $('cEnd').onclick = () => Input.push('stop');
   // settings
-  $('btnSettings').onclick = () => { UI.show('settings'); };
+  $('btnSettings').onclick = () => { renderSettings(); renderKeys(); UI.show('settings'); };
   $('btnCloseSettings').onclick = () => { renderHome(); UI.show('home'); };
-  $('rate').value = settings.rate; $('rateOut').textContent = settings.rate.toFixed(2) + '×';
+  $('btnVoice').onclick = () => { Voice.initNeural(true); renderSettings(); };
+  Voice.onChange(() => { renderVoiceChip(); if (!$('settings').hidden) renderSettings(); });
+  $('rate').value = settings.rate; $('rateOut').textContent = (+settings.rate).toFixed(2) + '×';
   $('rate').oninput = (e) => { settings.rate = +e.target.value; $('rateOut').textContent = settings.rate.toFixed(2) + '×'; saveSettings(); };
-  $('voiceSel').onchange = (e) => { settings.voice = e.target.value; saveSettings(); };
-  $('micOn').checked = settings.mic; $('micOn').onchange = (e) => { settings.mic = e.target.checked; saveSettings(); };
+  $('micOn').checked = settings.mic; $('micOn').onchange = (e) => { settings.mic = e.target.checked; saveSettings(); renderSettings(); };
+  $('earMode').value = settings.earMode || 'auto'; $('earMode').onchange = (e) => { settings.earMode = e.target.value; saveSettings(); renderSettings(); };
   $('optionsAloud').checked = settings.optionsAloud; $('optionsAloud').onchange = (e) => { settings.optionsAloud = e.target.checked; saveSettings(); };
-  const prov = $('provider'); prov.innerHTML = Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}">${esc(v.name)}</option>`).join(''); prov.value = settings.provider || 'gemini';
-  const provHint = () => { const P = PROVIDERS[settings.provider] || PROVIDERS.gemini; $('model').placeholder = P.model || 'model id'; $('keyLink').innerHTML = P.keys ? `Get a key: <a href="${P.keys}" target="_blank" rel="noopener">${P.keys.replace(/^https?:\/\//, '')}</a>` : ''; $('baseUrlRow').hidden = settings.provider !== 'custom'; };
-  prov.onchange = (e) => { settings.provider = e.target.value; settings.model = ''; settings.modelAuto = ''; $('model').value = ''; saveSettings(); provHint(); }; provHint();
-  $('apiKey').value = settings.apiKey; $('apiKey').onchange = (e) => { settings.apiKey = e.target.value.trim(); saveSettings(); };
-  $('model').value = settings.model; $('model').onchange = (e) => { settings.model = e.target.value.trim(); saveSettings(); };
-  $('baseUrl').value = settings.baseUrl || ''; $('baseUrl').onchange = (e) => { settings.baseUrl = e.target.value.trim(); saveSettings(); };
-  $('btnTestAI').onclick = async () => { $('aiOut').textContent = 'Asking…'; try { const reply = await Expand.ask('Reply in one short spoken sentence.', [{ role: 'user', content: 'Say hello and name yourself.' }]); $('aiOut').textContent = 'Reply: ' + reply + (settings.model ? '' : ' (model: ' + (settings.modelAuto || '') + ')'); } catch (e) { $('aiOut').textContent = Expand.explain(e); } };
+  $('btnTestAI').onclick = async () => {
+    const out = $('aiOut'); out.innerHTML = '';
+    if (!Brain.active().length) { out.textContent = 'Add at least one key first.'; return; }
+    for (const p of CHAIN) {
+      const row = document.createElement('div'); row.className = 'kst'; row.innerHTML = `<b>${esc(PROVIDERS[p].name)}</b><span>…</span>`; out.append(row);
+      if (!Brain.key(p)) { row.querySelector('span').textContent = 'no key · skipped'; row.classList.add('off'); continue; }
+      try { const ctl = new AbortController(); setTimeout(() => ctl.abort(), 15000); const t0 = performance.now(); const r = await Brain.one(p, 'Reply in at most eight words.', [{ role: 'user', content: 'Say hello.' }], ctl.signal); row.querySelector('span').textContent = `ok · ${Math.round(performance.now() - t0)} ms · ${Brain.status[p].model}`; row.classList.add('ok'); }
+      catch (e) { row.querySelector('span').textContent = String(e.message || e).slice(0, 110); row.classList.add('bad'); }
+    }
+  };
   $('ghRepo').value = settings.ghRepo; $('ghRepo').onchange = (e) => { settings.ghRepo = e.target.value.trim(); saveSettings(); };
   $('ghToken').value = settings.ghToken; $('ghToken').onchange = (e) => { settings.ghToken = e.target.value.trim(); saveSettings(); };
   $('btnTestVoice').onclick = async () => {
-    $('testOut').textContent = 'Speaking…'; await Voice.say('Testing. Say: option two.');
-    if (!Ear.available) { $('testOut').textContent = 'Voice works. This browser has no speech recognition; use the buttons.'; return; }
-    $('testOut').textContent = 'Listening…'; const alts = await Ear.listen(6000);
-    $('testOut').textContent = alts ? 'Heard: “' + alts[0] + '” → ' + (Parse.choice(alts[0], ['a', 'b', 'c']) === 1 ? 'understood as option two. Voice and microphone work.' : 'not understood as option two, but the microphone works.') : 'Nothing heard. Check the microphone permission for this site.';
+    Voice.unlock(); $('testOut').textContent = 'Speaking…'; await Voice.say('Testing. Say: option two.');
+    if (!Ear.available) { $('testOut').textContent = Ear.st.nativeOk ? 'The microphone is turned off above.' : 'This browser has no built-in speech recognition. Add a Groq key in the AI chain to use Whisper, or use Chrome or the installed app.'; return; }
+    $('testOut').textContent = 'Listening (' + Ear.label + ')…'; const alts = await Ear.listen(6000);
+    $('testOut').textContent = alts ? 'Heard: “' + alts[0] + '” → ' + (Parse.choice(alts[0], ['a', 'b', 'c']) === 1 ? 'understood as option two. Voice and microphone work.' : 'not option two, but the microphone works.') : ('Nothing heard. ' + (Ear.st.lastError || 'Check the microphone permission for this app.'));
+    renderSettings();
   };
   $('btnSync').onclick = async () => { $('syncOut').textContent = 'Syncing…'; try { $('syncOut').textContent = await Sync.push(); renderStats(); } catch (e) { $('syncOut').textContent = Sync.explain(e); } };
   $('btnRefresh').onclick = async () => { $('syncOut').textContent = 'Checking…'; try { const before = bank.built; await loadBank(); $('syncOut').textContent = bank.built === before ? 'Already up to date (' + bank.asOf + ').' : 'New material loaded: ' + bank.asOf + '.'; renderHome(); } catch (e) { $('syncOut').textContent = e.message; } };
@@ -779,14 +715,15 @@ function wire() {
   $('btnReset').onclick = () => { if ($('btnReset').dataset.armed) { for (const k of ['items', 'lessons', 'lectures', 'topics']) progress[k] = {}; progress.sessions = []; saveProgress(); $('dataOut').textContent = 'Progress reset.'; delete $('btnReset').dataset.armed; $('btnReset').textContent = 'Reset progress'; } else { $('btnReset').dataset.armed = '1'; $('btnReset').textContent = 'Tap again to confirm'; } };
   $('ver').textContent = VERSION;
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Session.running) Session.wakeLock(); });
-  // keyboard shortcuts for desktop testing
-  document.addEventListener('keydown', (e) => { if (!Session.running) return; if (e.key === ' ') { e.preventDefault(); Session.paused ? Session.resume() : Session.pause(); } if (e.key === 'ArrowRight') Input.push('skip'); if (e.key === 'r') Input.push('repeat'); if (e.key === 'e') Input.push('expand'); if (e.key === 'Escape') Input.push('stop'); if (/^[1-4]$/.test(e.key)) Input.push({ answer: +e.key - 1 }); });
+  document.addEventListener('keydown', (e) => { if (!Session.running) return; if (e.key === ' ') { e.preventDefault(); Session.paused ? Session.resume() : Session.pause(); } if (e.key === 'ArrowRight') Input.push('skip'); if (e.key === 'ArrowLeft' || e.key === 'r') Input.push('repeat'); if (e.key === 'e') Input.push('explain'); if (e.key === 'x') Input.push('expand'); if (e.key === 'a') Input.push('ai'); if (e.key === 'Escape') Input.push('stop'); if (/^[1-4]$/.test(e.key)) Input.push({ answer: +e.key - 1 }); });
 }
 
 (async function main() {
-  Voice.init(); wire();
+  wire(); Voice.init();
   try { await loadBank(); } catch (e) { $('bankInfo').textContent = e.message; return; }
   try { await Sync.pull(); } catch (e) { console.warn('sync pull', e); }
   renderHome(); renderPick();
+  // ?start=lecture|tutor (home-screen shortcuts)
+  const q = new URLSearchParams(location.search).get('start'); if (q === 'lecture' || q === 'tutor') { settings.mode = q; saveSettings(); renderHome(); }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
