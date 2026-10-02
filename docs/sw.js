@@ -1,5 +1,5 @@
 // Pandora Practice Pal service worker: app shell cached; bank.json network-first; works offline after the first visit.
-const SHELL = 'pp-shell-v6';
+const SHELL = 'pp-shell-v7';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './parse.js', './voice.js', './ear.js', './ai.js', './tts-worker.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('pp-shell-') && k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

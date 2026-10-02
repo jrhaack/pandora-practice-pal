@@ -56,7 +56,9 @@ const Voice = (() => {
   function ctx() { if (!st.ctx) st.ctx = new (window.AudioContext || window.webkitAudioContext)(); return st.ctx; }
   async function initNeural(force) {
     if (st.neural === 'loading' || st.neural === 'ready') return;
-    if (!force && !settings.neuralVoice) return;
+    if (!force && !settings.neuralVoice) {
+      try { const keys = await caches.keys(); const c = keys.includes('transformers-cache') ? await caches.open('transformers-cache') : null; const reqs = c ? await c.keys() : []; if (!reqs.some(r => /Kokoro/i.test(r.url))) return; } catch (e) { return; }
+    }
     let dev = 'wasm';
     try { if (navigator.gpu && await navigator.gpu.requestAdapter()) dev = 'webgpu'; } catch (e) { }
     if (dev !== 'webgpu') { st.neural = 'failed'; st.why = 'nogpu'; emit(); return; }
@@ -66,7 +68,7 @@ const Voice = (() => {
       st.worker.onmessage = (ev) => {
         const m = ev.data;
         if (m.type === 'progress') { st.progress = m.p; emit(); }
-        else if (m.type === 'ready') { st.neural = 'ready'; st.device = m.device; st.engine = 'neural'; settings.neuralVoice = true; saveSettings(); emit(); }
+        else if (m.type === 'ready') { st.neural = 'ready'; st.device = m.device; st.engine = 'neural'; settings.neuralVoice = true; try { saveSettings(); } catch (e) { } emit(); }
         else if (m.type === 'audio') {
           const w = st.waiters.get(m.id); st.waiters.delete(m.id); if (!w) return;
           const pcm = trim(m.pcm, m.sr); const buf = ctx().createBuffer(1, pcm.length, m.sr); buf.copyToChannel(pcm, 0);
@@ -98,40 +100,53 @@ const Voice = (() => {
     return d;
   }
 
+  // Sentences are scheduled on the audio clock (start(when)), so playback is gapless and immune to timer throttling.
+  // A 40 ms ticker maps the audio clock onto the timeline to drive the highlight.
   async function sayNeural(text, opts) {
     const cs = chunks(text); if (!cs.length) return true;
-    cs.forEach((c, i) => { if (!st.cache.has(key(c.text))) get(c.text, i === 0); }); // queue the whole block now
+    cs.forEach((c, i) => { if (!st.cache.has(key(c.text))) get(c.text, i === 0); });
     const ac = ctx(); if (ac.state === 'suspended') await ac.resume();
-    let base = 0; const startAt = Math.max(0, opts.startAt || 0);
-    for (let i = 0; i < cs.length; i++) {
-      if (st.cancelled) return false;
-      const c = cs[i];
-      let buf = st.cache.get(key(c.text));
-      if (!buf) { if (opts.onWait) opts.onWait(true); buf = await get(c.text, true); if (opts.onWait) opts.onWait(false); }
-      if (st.cancelled) return false;
-      if (!buf) { const ok = await saySystem(c.text, {}); if (!ok) return false; base += estDur(c.text) + GAP; continue; }
-      const dur = buf.duration;
-      if (base + dur <= startAt) { base += dur + GAP; continue; }   // rewind landed after this sentence
-      const off = Math.max(0, startAt - base);
-      const words = wordMap(c);
-      const ok = await new Promise((resolve) => {
-        const src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination); st.source = src;
-        const t0 = ac.currentTime - off; let done = false;
-        const tick = () => {
-          if (done) return;
-          const el = Math.min(dur, ac.currentTime - t0); st.pos = base + el;
-          const f = el / dur; const w = words.find(w => f < w.to) || words[words.length - 1];
-          if (w && opts.onProgress) opts.onProgress(w.at, w.len, c.start, c.text.length);
-          st.raf = requestAnimationFrame(tick);
-        };
-        src.onended = () => { done = true; cancelAnimationFrame(st.raf); st.source = null; resolve(!st.cancelled); };
-        src.start(0, off); tick();
-      });
-      if (!ok) return false;
-      base += dur;
-      if (i < cs.length - 1) { st.pos = base; await sleep(GAP * 1000); base += GAP; }
-    }
-    return true;
+    const startAt = Math.max(0, opts.startAt || 0);
+    const tl = []; st.sources = [];                 // [{at (audio clock), dur, off, base, c, words}]
+    let base = 0, nextAt = 0, finished = false;
+    const tick = () => {
+      const now = ac.currentTime; let cur = null;
+      for (const e of tl) if (now >= e.at - 0.01) cur = e;
+      if (!cur) return;
+      const el = Math.min(cur.dur, Math.max(0, now - cur.at) + cur.off); st.pos = cur.base + el;
+      const f = el / cur.dur; const w = cur.words.find(w => f < w.to) || cur.words[cur.words.length - 1];
+      if (w && opts.onProgress) opts.onProgress(w.at, w.len, cur.c.start, cur.c.text.length);
+    };
+    const iv = setInterval(tick, 40);
+    try {
+      for (let i = 0; i < cs.length; i++) {
+        if (st.cancelled) return false;
+        const c = cs[i];
+        let buf = st.cache.get(key(c.text));
+        if (!buf) {
+          const waiting = tl.length === 0 || ac.currentTime >= nextAt - 0.05;   // only show "preparing" if audio has actually run dry
+          if (waiting && opts.onWait) opts.onWait(true);
+          buf = await get(c.text, true);
+          if (opts.onWait) opts.onWait(false);
+        }
+        if (st.cancelled) return false;
+        if (!buf) { base += estDur(c.text) + GAP; continue; }
+        const dur = buf.duration;
+        if (base + dur <= startAt) { base += dur + GAP; continue; }
+        const off = Math.max(0, startAt - base);
+        const at = Math.max(ac.currentTime + 0.03, nextAt);
+        const src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination); src.start(at, off);
+        st.sources.push(src);
+        tl.push({ at, dur, off, base, c, words: wordMap(c) });
+        nextAt = at + (dur - off) + GAP; base += dur + GAP;
+        // keep at most ~2 sentences scheduled ahead so a Stop/Back is always instant
+        while (!st.cancelled && nextAt - ac.currentTime > 12) await sleep(150);
+      }
+      // wait for the last sentence to finish
+      while (!st.cancelled && ac.currentTime < nextAt - GAP) await sleep(60);
+      finished = !st.cancelled;
+      return finished;
+    } finally { clearInterval(iv); if (finished) tick(); }
   }
 
   // ---------- system voice fallback
@@ -182,7 +197,7 @@ const Voice = (() => {
     },
     stop() {
       st.cancelled = true; st.lastPos = st.pos;
-      try { if (st.source) st.source.stop(); } catch (e) { } cancelAnimationFrame(st.raf);
+      for (const src of (st.sources || [])) { try { src.stop(); } catch (e) { } } st.sources = [];
       try { speechSynthesis.cancel(); } catch (e) { }
       st.speaking = false;
     },
