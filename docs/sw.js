@@ -3,7 +3,7 @@
  * Offline study also requires a saved bank, both audio packs, and their runtime caches.
  * Runtime imports survive shell updates; the audio libraries own model-file caches.
  */
-const SHELL = 'pp-shell-v14';
+const SHELL = 'pp-shell-v15';
 const AUDIO_RUNTIME = 'murmur-audio-runtime-v1';
 const ASSETS = [
   './',
@@ -23,6 +23,7 @@ const ASSETS = [
   './voice-setup.js',
   './audio-files.js',
   './manifest.webmanifest',
+  './icons/signalcraft-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/maskable-512.png'
