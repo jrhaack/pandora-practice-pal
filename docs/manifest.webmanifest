@@ -34,10 +34,5 @@
   "shortcuts": [
     { "name": "Lecture", "short_name": "Lecture", "description": "Resume or start a spoken lecture", "url": "./index.html?start=lecture", "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96", "type": "image/png" }] },
     { "name": "Tutor", "short_name": "Tutor", "description": "Spoken questions with explanations", "url": "./index.html?start=tutor", "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96", "type": "image/png" }] }
-  ],
-  "screenshots": [
-    { "src": "screenshots/home.png", "sizes": "1080x2340", "type": "image/png", "form_factor": "narrow", "label": "Pick a course, resume a lecture or start tutoring" },
-    { "src": "screenshots/lecture.png", "sizes": "1080x2340", "type": "image/png", "form_factor": "narrow", "label": "Spoken lecture with word-by-word highlighting" },
-    { "src": "screenshots/wide.png", "sizes": "1920x1080", "type": "image/png", "form_factor": "wide", "label": "Murmur on a larger screen" }
   ]
 }

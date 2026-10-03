@@ -1,46 +1,94 @@
+// Cache verification may load small runtime code, but never fetch missing model files.
+const originalFetch = globalThis.fetch.bind(globalThis);
+function useCachedModelsOnly() {
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input.url, globalThis.location?.href);
+    if (url.hostname === 'cdn.jsdelivr.net' && url.pathname.startsWith('/npm/'))
+      return originalFetch(input, init);
+    for (const name of ['transformers-cache', 'kokoro-voices']) {
+      const cache = await caches.open(name);
+      const hit = await cache.match(input);
+      if (hit) return hit;
+    }
+    throw new Error(
+      'A required audio file is missing from this device. Find existing files or confirm a download.'
+    );
+  };
+}
 // Murmur — Kokoro neural voice, generated on the phone (WebGPU) in a background worker.
 // Messages in:  {type:'init', device, dtype} · {type:'gen', id, text, voice, speed}
 // Messages out: {type:'ready', device} · {type:'progress', p} · {type:'audio', id, pcm(Float32Array), sr} · {type:'error', id?, message}
-let tts = null, device = null;
+let tts = null,
+  device = null;
 const KOKORO = 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
 const MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
 async function init(msg) {
+  if (msg.cacheOnly) useCachedModelsOnly();
   const { KokoroTTS } = await import(KOKORO);
-  const tries = msg.device === 'webgpu' ? [['webgpu', msg.dtype || 'fp32'], ['wasm', 'q8']] : [['wasm', 'q8']];
+  const tries =
+    msg.device === 'webgpu'
+      ? [
+          ['webgpu', msg.dtype || 'fp32'],
+          ['wasm', 'q8']
+        ]
+      : [['wasm', 'q8']];
   let lastErr = null;
   for (const [dev, dtype] of tries) {
     try {
       tts = await KokoroTTS.from_pretrained(MODEL, {
-        dtype, device: dev,
-        progress_callback: (e) => { if (e && e.status === 'progress' && e.file && /onnx/.test(e.file)) postMessage({ type: 'progress', p: e.progress || 0 }); },
+        dtype,
+        device: dev,
+        progress_callback: (e) => {
+          if (e && e.status === 'progress' && e.file && /onnx/.test(e.file))
+            postMessage({ type: 'progress', p: e.progress || 0 });
+        }
       });
       device = dev;
       await tts.generate('Ready.', { voice: 'af_heart' }); // warm-up compiles the shaders
       postMessage({ type: 'ready', device });
       return;
-    } catch (e) { lastErr = e; }
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  postMessage({ type: 'error', message: 'voice could not load: ' + (lastErr && lastErr.message || lastErr) });
+  postMessage({
+    type: 'error',
+    message: 'voice could not load: ' + ((lastErr && lastErr.message) || lastErr)
+  });
 }
 
-const queue = []; let busy = false;
+const queue = [];
+let busy = false;
 async function pump() {
-  if (busy) return; busy = true;
+  if (busy) return;
+  busy = true;
   while (queue.length) {
     const m = queue.shift();
     try {
       const a = await tts.generate(m.text, { voice: m.voice || 'af_heart', speed: m.speed || 1 });
       const pcm = a.audio instanceof Float32Array ? a.audio : new Float32Array(a.audio);
       postMessage({ type: 'audio', id: m.id, pcm, sr: a.sampling_rate }, [pcm.buffer]);
-    } catch (e) { postMessage({ type: 'error', id: m.id, message: String(e && e.message || e) }); }
+    } catch (e) {
+      postMessage({ type: 'error', id: m.id, message: String((e && e.message) || e) });
+    }
   }
   busy = false;
 }
 
 onmessage = (ev) => {
   const m = ev.data;
-  if (m.type === 'init') init(m);
-  else if (m.type === 'gen') { if (m.urgent) queue.unshift(m); else queue.push(m); pump(); }
-  else if (m.type === 'drop') { for (let i = queue.length - 1; i >= 0; i--) if (!m.keep || !m.keep.includes(queue[i].id)) queue.splice(i, 1); }
+  if (m.type === 'init')
+    init(m).catch((e) => postMessage({ type: 'error', message: String(e.message || e) }));
+  else if (m.type === 'gen') {
+    if (m.urgent) queue.unshift(m);
+    else queue.push(m);
+    pump();
+  } else if (m.type === 'promote') {
+    const at = queue.findIndex((x) => x.id === m.id);
+    if (at > 0) queue.unshift(queue.splice(at, 1)[0]);
+  } else if (m.type === 'drop') {
+    for (let i = queue.length - 1; i >= 0; i--)
+      if (!m.keep || !m.keep.includes(queue[i].id)) queue.splice(i, 1);
+  }
 };

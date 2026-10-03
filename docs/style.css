@@ -207,3 +207,98 @@ h1 .tag { display: block; font: 600 .62em/1.2 "Atkinson Hyperlegible", system-ui
 .sc-about .sc-badge { width: 64px; height: 64px; }
 .sc-word { margin: 0; font-size: 1.5rem; letter-spacing: -.01em; } .sc-word b { font-weight: 700; }
 .sc-tagline { margin: 2px 0 8px; font-size: .68rem; letter-spacing: .18em; color: #ff7a1a; font-weight: 700; }
+
+/* Shared learning: follow the existing single-column cards and large phone controls. */
+.adaptive-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; margin: 12px 0; }
+.adaptive-card h3 { font: 700 1.05rem/1.35 var(--font); margin: 0 0 8px; }
+.adaptive-card p { color: var(--muted); font-size: .94rem; line-height: 1.5; margin: 8px 0; }
+.adaptive-card small { display: block; color: var(--muted); margin: 8px 0 12px; }
+.adaptive-card .btn { min-height: 48px; width: 100%; }
+.adaptive-evidence { color: var(--muted); font-size: .9rem; line-height: 1.55; padding: 8px 0; }
+.adaptive-evidence summary { color: var(--fg); cursor: pointer; min-height: 44px; display: list-item; align-content: center; }
+
+/* Settings: clear sections, usable selects, compact disclosure of advanced controls. */
+#settings { max-width: 760px; gap: 18px; }
+.settings-header { padding: 12px 2px 6px; align-items: flex-start; }
+.settings-header h1 { margin: 7px 0; font-size: 32px; }
+#settings .card { padding: 22px; box-shadow: 0 8px 26px #0000000b; }
+.settings-section-title { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 5px; }
+.settings-section-title h2 { font: 700 21px/1.2 var(--display); margin: 0; letter-spacing: -.02em; }
+.settings-section-title p { font-size: 14px; color: var(--muted); margin: 5px 0 0; }
+.settings-number { display: grid; place-items: center; width: 34px; height: 34px; flex: none; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line)); border-radius: 10px; font-size: 12px; font-weight: 700; }
+#settings .form > .hint { line-height: 1.6; }
+#settings .form select { appearance: none; padding: 13px 40px 13px 14px; min-height: 50px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%2393a1b3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
+#settings select:hover, #settings input[type=text]:hover, #settings input[type=password]:hover { border-color: var(--muted); }
+#settings select:focus, #settings input:focus { border-color: var(--accent); }
+#settings select option { background: var(--panel); color: var(--fg); }
+#settings .help { line-height: 1.5; padding: 12px 14px; }
+#settings .help summary { min-height: 28px; align-content: center; }
+#settings .help[open] > :not(summary) { margin-top: 12px; }
+#settings .form label.row { padding: 5px 0; line-height: 1.4; }
+#settings .form label.row input { flex: none; }
+#settings .btn { min-height: 48px; }
+.btn.quiet { background: transparent; color: var(--muted); border-color: transparent; }
+.btn.quiet:hover { background: var(--panel2); color: var(--fg); }
+.audio-pack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.audio-pack { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: 14px; padding: 15px; background: color-mix(in srgb, var(--panel2) 55%, transparent); }
+.audio-pack b { font-size: 16px; }
+.audio-pack small { color: var(--muted); font-size: 13px; }
+.audio-pack > span:last-child { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.audio-pack .audio-pack-icon { font-size: 26px; color: var(--accent); line-height: 1; margin-bottom: 6px; }
+.audio-status { min-height: 2.8em; line-height: 1.5; }
+.audio-status.has-error { color: var(--bad); }
+.audio-progress { width: 100%; height: 8px; border: 0; border-radius: 9px; overflow: hidden; appearance: none; background: var(--line); accent-color: var(--accent); }
+.audio-progress::-webkit-progress-bar { background: var(--line); border-radius: 9px; }
+.audio-progress::-webkit-progress-value { background: var(--accent); border-radius: 9px; }
+.audio-progress::-moz-progress-bar { background: var(--accent); border-radius: 9px; }
+.settings-note { margin: 0; padding: 12px 14px; border-radius: 11px; background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border-left: 3px solid var(--accent); color: var(--muted); font-size: 13px; line-height: 1.6; }
+#keyRows { display: flex; flex-direction: column; gap: 12px; }
+.ai-slot { border: 1px solid var(--line); border-radius: 14px; background: var(--bg); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.ai-slot-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13px; font-weight: 700; color: var(--muted); }
+.ai-slot-head .n { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; background: var(--panel2); color: var(--accent); }
+.ai-slot-body { display: flex; flex-direction: column; gap: 9px; }
+.ai-slot-body a { font-size: 13px; }
+.ai-slot-body input { background: var(--panel)!important; }
+#aiChainStatus { font-size: 14px; line-height: 1.5; color: var(--muted); }
+.audio-setup-dialog { width: min(540px, calc(100% - 28px)); max-height: calc(100dvh - 32px); padding: 26px; border-radius: 26px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 25px 90px #0008; overflow: auto; }
+.audio-setup-dialog::backdrop { background: #080e18b8; backdrop-filter: blur(5px); }
+.audio-setup-heading img { border-radius: 16px; display: block; margin-bottom: 18px; }
+.audio-setup-heading h2 { font: 800 clamp(29px,6vw,37px)/1.07 var(--display); letter-spacing: -.035em; margin: 10px 0 14px; }
+.audio-setup-heading p { color: var(--muted); font-size: 16px; line-height: 1.55; margin: 0 0 19px; }
+.audio-setup-dialog > .hint { margin: 14px 0; font-size: 13px; line-height: 1.6; }
+.audio-setup-dialog .audio-pack { padding: 13px; }
+.audio-setup-actions { display: grid; gap: 6px; margin-top: 15px; }
+.audio-setup-actions .btn { min-height: 49px; }
+.audio-setup-foot { text-align: center; color: var(--muted); font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
+@media(max-width:420px) { #settings .card { padding: 17px; } .settings-section-title h2 { font-size: 19px; } .audio-setup-dialog { padding: 21px; } .audio-pack { padding: 12px; } .audio-pack b { font-size: 15px; } }
+.ai-paid-gate, .ai-backup { border: 1px solid var(--line); border-radius: 13px; padding: 14px; background: var(--panel2); }
+.ai-paid-gate .hint { margin-top: 8px; font-size: 13px; line-height: 1.55; }
+.ai-paid-gate label.row { font-weight: 700; }
+#settings #paidAIEnabled { appearance: none; position: relative; width: 44px; height: 26px; border-radius: 20px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; margin: 0; }
+#settings #paidAIEnabled::before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; border-radius: 50%; background: var(--muted); }
+#settings #paidAIEnabled:checked { background: var(--accent); border-color: var(--accent); }
+#settings #paidAIEnabled:checked::before { left: 21px; background: var(--accent-ink); }
+.ai-slot .keyhead { flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+.workbench-link { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-decoration: none; color: var(--fg); }
+.workbench-link span { color: var(--accent); }
+.audio-recovery { margin-top: 12px; font-size: 14px; line-height: 1.5; }
+.audio-recovery > :not(summary) { margin-top: 12px; }
+.audio-recovery select { display: block; width: 100%; margin-top: 6px; padding: 11px; min-height: 46px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+.audio-recovery label { display: block; color: var(--muted); }
+.audio-setup-dialog .audio-setup-actions .btn { width: 100%; }
+
+.audio-pack > span[data-state="ready"] { color: var(--good); }
+.audio-pack > span[data-state="failed"] { color: var(--bad); }
+.audio-pack > span[data-state="loading"] { color: var(--accent); }
+.audio-secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#settings .audio-secondary-actions .btn { min-height: 42px; padding: 9px 6px; font-size: 14px; }
+
+#audioRecoveryStatus { white-space: pre-line; overflow-wrap: anywhere; }
+
+.paid-confirm-dialog { width: min(480px, calc(100% - 28px)); max-height: calc(100dvh - 32px); padding: 25px; border-radius: 22px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 25px 90px #0008; overflow: auto; }
+.paid-confirm-dialog::backdrop { background: #080e18b8; backdrop-filter: blur(5px); }
+.paid-confirm-dialog h2 { margin: 12px 0; font: 700 27px/1.15 var(--display); letter-spacing: -.025em; }
+.paid-confirm-dialog p { font-size: 15px; line-height: 1.65; color: var(--muted); }
+.paid-confirm-dialog .settings-note { font-size: 13px; }
+.paid-confirm-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: 10px; margin-top: 22px; }
+.paid-confirm-actions .btn { min-height: 48px; }

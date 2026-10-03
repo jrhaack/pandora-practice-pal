@@ -1,181 +1,644 @@
-/* Murmur — voice input that works in every browser.
-   Engines, tried in this order (Settings → Microphone can force one):
-   1. built-in  – the browser's speech recognition (Chrome, the installed app). Fast and free, but always uses the
-                  system's default microphone.
-   2. on-device – Whisper running on this phone/computer (WebGPU, or WebAssembly in Firefox). No key, no server;
-                  a ~80 MB model downloads once.
-   3. cloud     – Whisper on the built-in Murmur cloud (no key), or on Groq if a Groq key is set.
-   Engines 2 and 3 record from the microphone chosen in Settings, clean the sound (echo cancellation, noise
-   suppression, auto gain), detect when you stop talking, and resample to 16 kHz mono PCM — no lossy codec. */
+/* Murmur microphone. A listening turn owns capture, recognition and transcription.
+   Explicit on-device mode never uploads audio. Cancelled turns cannot return answers. */
 'use strict';
 const Ear = (() => {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const st = { nativeOk: !!SR, nativeBroken: false, stream: null, streamDev: null, abort: null, lastError: '', level: 0,
-    local: 'off', localProgress: 0, localDevice: null, worker: null, seq: 0, waiters: new Map(), listeners: new Set() };
-  const emit = () => { for (const f of st.listeners) try { f(st); } catch (e) { } };
-  const canRecord = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  const groqKey = () => (settings.keys && settings.keys.groq) || '';
-  const want = () => settings.earMode || 'auto';
-
-  // which engine will be used right now
+  const st = {
+    nativeOk: !!SR,
+    nativeBroken: false,
+    stream: null,
+    streamDev: null,
+    streamPromise: null,
+    streamGeneration: 0,
+    abort: null,
+    lastError: '',
+    level: 0,
+    local: 'off',
+    localProgress: 0,
+    localDevice: null,
+    worker: null,
+    seq: 0,
+    waiters: new Map(),
+    listeners: new Set(),
+    active: null,
+    listening: false
+  };
+  const emit = () => {
+    for (const fn of st.listeners)
+      try {
+        fn(st);
+      } catch {}
+  };
+  const canRecord = () => !!navigator.mediaDevices?.getUserMedia;
+  const groqKey = () => settings.keys?.groq || '';
   function mode() {
-    const w = want(), dev = !!settings.micId;
+    const w = settings.earMode || 'auto';
     if (w === 'native') return st.nativeOk ? 'native' : 'none';
-    if (w === 'local') return canRecord() ? 'local' : 'none';
-    if (w === 'groq') return canRecord() ? 'groq' : 'none';
-    // auto: built-in unless it failed here or a specific microphone was chosen (built-in cannot be pointed at one)
-    if (st.nativeOk && !st.nativeBroken && !dev) return 'native';
-    if (canRecord()) return 'local';
-    return canRecord() ? 'groq' : 'none';
+    if (w === 'local' || w === 'groq') return canRecord() ? w : 'none';
+    if (st.nativeOk && !st.nativeBroken && !settings.micId) return 'native';
+    return canRecord() ? 'local' : 'none';
   }
-
-  // ---------- built-in recogniser
-  function listenNative(ms) {
-    return new Promise((resolve) => {
-      const r = new SR();
-      r.lang = 'en-US'; r.continuous = false; r.interimResults = false; r.maxAlternatives = 5;
-      let done = false;
-      const finish = (val) => { if (done) return; done = true; clearTimeout(t); try { r.stop(); } catch (e) { } st.abort = null; resolve(val); };
-      const t = setTimeout(() => { try { r.abort(); } catch (e) { } finish(null); }, ms);
-      st.abort = () => { try { r.abort(); } catch (e) { } finish(null); };
-      r.onresult = (ev) => { const alts = []; for (const res of ev.results) for (let i = 0; i < res.length; i++) alts.push(res[i].transcript); finish(alts); };
-      r.onerror = (ev) => {
-        if (['network', 'service-not-allowed', 'language-not-supported', 'audio-capture'].includes(ev.error)) { st.nativeBroken = true; st.lastError = 'The built-in recogniser is not available here (' + ev.error + '); switched to on-device Whisper.'; emit(); finish({ retry: true }); return; }
-        if (ev.error === 'not-allowed') { st.lastError = 'Microphone permission is blocked. Open Settings → Microphone → Fix permission.'; emit(); }
-        finish(null);
-      };
-      r.onend = () => finish(null);
-      try { r.start(); } catch (e) { finish(null); }
-    });
+  const active = (op) => st.active === op && !op.cancelled;
+  const phase = (op, name) => {
+    if (active(op)) {
+      st.listening = name === 'listening';
+      op.onState?.(name);
+      emit();
+    }
+  };
+  // Stop the listening turn but retain its permitted stream for the next question.
+  // Session end, microphone-off and device changes also call release().
+  function stop() {
+    const op = st.active;
+    if (op) {
+      op.cancelled = true;
+      op.resolveCancel(null);
+      for (const f of [...op.cleanups]) f();
+      op.cleanups.clear();
+      if (st.active === op) st.active = null;
+    }
+    st.abort = null;
+    st.listening = false;
+    st.level = 0;
+    emit();
   }
-
-  // ---------- recording (shared by on-device and Groq)
+  // A generation counter prevents a permission prompt that resolves after release
+  // from reopening an ended session. Concurrent requests share one permission prompt.
   async function stream() {
     const id = settings.micId || '';
-    if (st.stream && st.stream.active && st.streamDev === id) return st.stream;
-    if (st.stream) st.stream.getTracks().forEach(t => t.stop());
-    const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    if (st.stream?.active && st.streamDev === id) return st.stream;
+    if (st.streamPromise) return st.streamPromise;
+    release();
+    const generation = st.streamGeneration;
+    const audio = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1
+    };
     if (id) audio.deviceId = { exact: id };
-    try { st.stream = await navigator.mediaDevices.getUserMedia({ audio }); }
-    catch (e) {
-      if (id && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) { settings.micId = ''; saveSettings(); st.stream = await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: undefined } }); }
-      else throw e;
-    }
-    st.streamDev = id; emit();
-    return st.stream;
+    let promise;
+    promise = (async () => {
+      let selected = id,
+        s;
+      try {
+        s = await navigator.mediaDevices.getUserMedia({ audio });
+      } catch (e) {
+        if (id && ['OverconstrainedError', 'NotFoundError'].includes(e.name)) {
+          settings.micId = '';
+          selected = '';
+          saveSettings();
+          s = await navigator.mediaDevices.getUserMedia({
+            audio: { ...audio, deviceId: undefined }
+          });
+        } else throw e;
+      }
+      if (generation !== st.streamGeneration) {
+        s.getTracks().forEach((t) => t.stop());
+        return null;
+      }
+      st.stream = s;
+      st.streamDev = selected;
+      emit();
+      return s;
+    })().finally(() => {
+      if (st.streamPromise === promise) st.streamPromise = null;
+    });
+    st.streamPromise = promise;
+    return promise;
   }
-  // records until ~0.8 s of quiet after speech; returns Float32Array at 16 kHz, or null
-  async function capture(ms, onLevel) {
-    let s; try { s = await stream(); } catch (e) { st.lastError = e.name === 'NotAllowedError' ? 'Microphone permission is blocked. Open Settings → Microphone → Fix permission.' : 'Microphone unavailable: ' + (e.message || e.name); emit(); return null; }
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
-    if (ac.state === 'suspended') { try { await ac.resume(); } catch (e) { } }
-    const src = ac.createMediaStreamSource(s);
-    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;   // cut road rumble
-    const proc = ac.createScriptProcessor(2048, 1, 1); const sink = ac.createGain(); sink.gain.value = 0;
-    src.connect(hp); hp.connect(proc); proc.connect(sink); sink.connect(ac.destination);
-    const chunks = []; let noise = 0.008, spoke = false, lastVoice = 0, pre = []; const t0 = performance.now();
+  function release() {
+    st.streamGeneration++;
+    if (st.stream) st.stream.getTracks().forEach((t) => t.stop());
+    st.stream = null;
+    st.streamDev = null;
+    st.streamPromise = null;
+  }
+  // Some browsers end recognition on brief silence. Restart within the same
+  // answer deadline; speech begun near the deadline receives eight seconds to finish.
+  function listenNative(ms, op) {
+    return new Promise((resolve) => {
+      let done = false,
+        r,
+        deadline = 0,
+        spoken = false,
+        lastInterim = '',
+        timer,
+        bootTimer,
+        restart;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        clearTimeout(bootTimer);
+        clearTimeout(restart);
+        op.cleanups.delete(cancel);
+        if (r) {
+          r.onend = r.onresult = r.onerror = r.onstart = r.onspeechstart = null;
+          try {
+            r.abort();
+          } catch {}
+        }
+        resolve(v);
+      };
+      const cancel = () => finish(null);
+      op.cleanups.add(cancel);
+      const arm = () => {
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => finish(lastInterim ? [lastInterim] : null),
+          Math.max(0, deadline - performance.now())
+        );
+      };
+      const begin = () => {
+        if (!active(op)) return finish(null);
+        r = new SR();
+        r.lang = 'en-US';
+        r.continuous = true;
+        r.interimResults = true;
+        r.maxAlternatives = 5;
+        r.onstart = () => {
+          clearTimeout(bootTimer);
+          if (!deadline) {
+            deadline = performance.now() + ms;
+            arm();
+          }
+          phase(op, 'listening');
+        };
+        r.onspeechstart = () => {
+          if (!spoken) {
+            spoken = true;
+            deadline = Math.max(deadline, performance.now() + 8000);
+            arm();
+          }
+        };
+        r.onresult = (e) => {
+          let final = [];
+          for (let n = e.resultIndex || 0; n < e.results.length; n++) {
+            const result = e.results[n];
+            if (result.isFinal === false) {
+              lastInterim = String(result[0]?.transcript || '');
+              continue;
+            }
+            for (let i = 0; i < result.length; i++) final.push(result[i].transcript);
+          }
+          if (final.length) finish(final);
+        };
+        r.onerror = (e) => {
+          if (done || !active(op)) return;
+          if (e.error === 'no-speech' || e.error === 'aborted') return;
+          if (
+            ['network', 'service-not-allowed', 'language-not-supported', 'audio-capture'].includes(
+              e.error
+            )
+          ) {
+            st.nativeBroken = true;
+            st.lastError =
+              'Built-in speech recognition is unavailable. Choose or download on-device recognition in Audio settings.';
+            emit();
+            finish({ retry: true });
+            return;
+          }
+          if (e.error === 'not-allowed') {
+            st.lastError =
+              'Microphone permission is blocked. Open Settings → Microphone → Fix permission.';
+            emit();
+          }
+          finish(null);
+        };
+        r.onend = () => {
+          if (done) return;
+          if (lastInterim) return finish([lastInterim]);
+          if (active(op) && deadline && performance.now() < deadline - 200) {
+            restart = setTimeout(begin, 180);
+            return;
+          }
+          finish(null);
+        };
+        bootTimer = setTimeout(() => {
+          st.lastError =
+            'The microphone did not start. Check its permission or choose another recognition engine.';
+          emit();
+          finish(null);
+        }, 7000);
+        try {
+          r.start();
+        } catch (e) {
+          st.lastError = 'The microphone could not start: ' + String(e.message || e);
+          emit();
+          finish(null);
+        }
+      };
+      begin();
+    });
+  }
+  // Local/cloud engines share mono PCM capture. Finish after one second of quiet;
+  // independent wall-clock timers also settle blocked or starved audio callbacks.
+  async function capture(ms, onLevel, op = st.active) {
+    if (!op) return null;
+    phase(op, 'opening');
+    let s;
+    try {
+      s = await Promise.race([stream(), op.cancelPromise]);
+    } catch (e) {
+      if (active(op)) {
+        st.lastError =
+          e.name === 'NotAllowedError'
+            ? 'Microphone permission is blocked. Open Settings → Microphone → Fix permission.'
+            : 'Microphone unavailable: ' + String(e.message || e.name);
+        emit();
+      }
+      return null;
+    }
+    if (!s || !active(op)) return null;
+    let ac, src, hp, proc, sink;
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      if (ac.state === 'suspended') await Promise.race([ac.resume(), op.cancelPromise]);
+      if (!active(op)) {
+        ac.close();
+        return null;
+      }
+      src = ac.createMediaStreamSource(s);
+      hp = ac.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 90;
+      proc = ac.createScriptProcessor(2048, 1, 1);
+      sink = ac.createGain();
+      sink.gain.value = 0;
+      src.connect(hp);
+      hp.connect(proc);
+      proc.connect(sink);
+      sink.connect(ac.destination);
+    } catch (e) {
+      try {
+        ac?.close();
+      } catch {}
+      st.lastError = 'Audio input could not start: ' + String(e.message || e);
+      emit();
+      return null;
+    }
+    const chunks = [],
+      pre = [];
+    let noise = 0.006,
+      spoke = false,
+      lastVoice = performance.now();
+    phase(op, 'listening');
     const result = await new Promise((resolve) => {
-      let done = false;
-      const stop = (keep) => { if (done) return; done = true; proc.onaudioprocess = null; resolve(keep); };
-      st.abort = () => stop(false);
+      let done = false,
+        quietTimer,
+        firstTimer,
+        hardTimer;
+      const finish = (keep) => {
+        if (done) return;
+        done = true;
+        clearTimeout(quietTimer);
+        clearTimeout(firstTimer);
+        clearTimeout(hardTimer);
+        proc.onaudioprocess = null;
+        op.cleanups.delete(cancel);
+        resolve(keep && active(op));
+      };
+      const cancel = () => finish(false);
+      op.cleanups.add(cancel);
+      firstTimer = setTimeout(() => finish(false), ms);
+      hardTimer = setTimeout(() => finish(spoke), ms + 15000);
       proc.onaudioprocess = (e) => {
-        const x = e.inputBuffer.getChannelData(0); let en = 0; for (let i = 0; i < x.length; i++) en += x[i] * x[i];
-        const rms = Math.sqrt(en / x.length); st.level = rms; if (onLevel) onLevel(rms);
-        const now = performance.now(); const copy = new Float32Array(x);
-        if (!spoke) { noise = noise * 0.96 + rms * 0.04; pre.push(copy); if (pre.length > 6) pre.shift(); }   // keep ~0.25 s before speech starts
-        if (rms > Math.max(0.018, noise * 2.8)) { if (!spoke) { spoke = true; chunks.push(...pre); } lastVoice = now; }
-        if (spoke) chunks.push(copy);
-        if (spoke && now - lastVoice > 800) stop(true);
-        if (!spoke && now - t0 > ms) stop(false);
-        if (now - t0 > ms + 9000) stop(spoke);
+        if (!active(op)) return finish(false);
+        const x = e.inputBuffer.getChannelData(0);
+        let en = 0;
+        for (const a of x) en += a * a;
+        const rms = Math.sqrt(en / x.length);
+        st.level = rms;
+        onLevel?.(rms);
+        const now = performance.now(),
+          copy = new Float32Array(x),
+          isVoice = rms > Math.max(0.012, noise * 2.5);
+        if (!spoke) {
+          if (!isVoice) noise = noise * 0.98 + rms * 0.02;
+          pre.push(copy);
+          if (pre.length > 6) pre.shift();
+        }
+        if (isVoice) {
+          if (!spoke) {
+            spoke = true;
+            clearTimeout(firstTimer);
+            chunks.push(...pre);
+          } else chunks.push(copy);
+          lastVoice = now;
+          clearTimeout(quietTimer);
+          quietTimer = setTimeout(() => finish(true), 1000);
+        } else if (spoke) chunks.push(copy);
       };
     });
-    st.abort = null;
-    try { src.disconnect(); proc.disconnect(); } catch (e) { }
-    const rate = ac.sampleRate; try { ac.close(); } catch (e) { }
-    if (!result || !chunks.length) return null;
-    const n = chunks.reduce((a, c) => a + c.length, 0); const all = new Float32Array(n); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
-    // resample to 16 kHz with the browser's own (band-limited) resampler, then normalise the level
-    const outLen = Math.ceil(n * 16000 / rate); const off = new OfflineAudioContext(1, outLen, 16000);
-    const b = off.createBuffer(1, n, rate); b.copyToChannel(all, 0); const bs = off.createBufferSource(); bs.buffer = b; bs.connect(off.destination); bs.start();
-    const pcm = (await off.startRendering()).getChannelData(0);
-    let peak = 0; for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
-    if (peak > 0.0001) { const g = Math.min(8, 0.9 / peak); for (let i = 0; i < pcm.length; i++) pcm[i] *= g; }
+    st.level = 0;
+    for (const node of [src, hp, proc, sink])
+      try {
+        node.disconnect();
+      } catch {}
+    const rate = ac.sampleRate;
+    try {
+      await ac.close();
+    } catch {}
+    if (!result || !chunks.length || !active(op)) return null;
+    const n = chunks.reduce((sum, c) => sum + c.length, 0),
+      all = new Float32Array(n);
+    let offset = 0;
+    for (const chunk of chunks) {
+      all.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const offline = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+        1,
+        Math.ceil((n * 16000) / rate),
+        16000
+      ),
+      buffer = offline.createBuffer(1, n, rate);
+    buffer.copyToChannel(all, 0);
+    const source = offline.createBufferSource();
+    source.buffer = buffer;
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await Promise.race([offline.startRendering(), op.cancelPromise]);
+    if (!rendered || !active(op)) return null;
+    const pcm = rendered.getChannelData(0);
+    let peak = 0;
+    for (const x of pcm) peak = Math.max(peak, Math.abs(x));
+    if (peak > 0.0001) {
+      const gain = Math.min(8, 0.9 / peak);
+      for (let i = 0; i < pcm.length; i++) pcm[i] *= gain;
+    }
     return pcm;
   }
-  function wav(pcm) { // 16-bit PCM WAV, 16 kHz mono
-    const b = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(b); const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-    w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
-    for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+  function wav(pcm) {
+    const b = new ArrayBuffer(44 + pcm.length * 2),
+      v = new DataView(b),
+      w = (o, s) => {
+        for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+      };
+    w(0, 'RIFF');
+    v.setUint32(4, 36 + pcm.length * 2, true);
+    w(8, 'WAVE');
+    w(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, 16000, true);
+    v.setUint32(28, 32000, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    w(36, 'data');
+    v.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++)
+      v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
     return new Blob([b], { type: 'audio/wav' });
   }
-
-  // ---------- on-device Whisper
-  async function initLocal() {
-    if (st.local === 'loading' || st.local === 'ready') return;
-    st.local = 'loading'; st.localProgress = 0; emit();
-    let dev = 'wasm'; try { if (navigator.gpu && await navigator.gpu.requestAdapter()) dev = 'webgpu'; } catch (e) { }
-    st.worker = new Worker('stt-worker.js', { type: 'module' });
-    st.worker.onmessage = (ev) => {
-      const m = ev.data;
-      if (m.type === 'progress') { st.localProgress = m.p; emit(); }
-      else if (m.type === 'ready') { st.local = 'ready'; st.localDevice = m.device; settings.localStt = true; try { saveSettings(); } catch (e) { } emit(); }
-      else if (m.type === 'text' || (m.type === 'error' && m.id != null)) { const r = st.waiters.get(m.id); st.waiters.delete(m.id); if (r) r(m.type === 'text' ? m.text : null); }
-      else if (m.type === 'error') { st.local = 'failed'; st.lastError = 'On-device recogniser could not load: ' + m.message; emit(); }
-    };
-    st.worker.postMessage({ type: 'init', device: dev });
+  function settle(id, text) {
+    const w = st.waiters.get(id);
+    if (!w) return;
+    clearTimeout(w.timer);
+    st.waiters.delete(id);
+    w.resolve(text);
   }
-  async function transcribeLocal(pcm) {
-    if (st.local !== 'ready') { initLocal(); return null; } // still downloading: the cloud answers this time
-    const id = ++st.seq; st.worker.postMessage({ type: 'run', id, pcm }, [pcm.buffer]);
-    return await new Promise(r => { st.waiters.set(id, r); setTimeout(() => { if (st.waiters.has(id)) { st.waiters.delete(id); r(null); } }, 15000); });
+  function failed(error) {
+    st.local = 'failed';
+    st.lastError = 'On-device recognition could not load: ' + error;
+    for (const id of [...st.waiters.keys()]) settle(id, null);
+    emit();
   }
-  async function transcribeGroq(pcm) {
+  /** Load or verify the recognizer. cacheOnly is forwarded to the worker before
+   * it imports the inference library, so absent model files cannot trigger a download. */
+  async function initLocal(options = {}) {
+    if (['loading', 'ready'].includes(st.local)) return;
+    st.local = 'loading';
+    st.localProgress = 0;
+    emit();
     try {
-      const fd = new FormData(); fd.append('file', wav(pcm), 'answer.wav'); fd.append('model', 'whisper-large-v3-turbo'); fd.append('language', 'en'); fd.append('response_format', 'json');
-      fd.append('prompt', 'Option one, option two, true, false, milliamps, kilohms, volts, hertz, NAND, binary.');
-      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 9000);
-      const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + groqKey() }, body: fd, signal: ctl.signal });
-      clearTimeout(to); if (!r.ok) { st.lastError = 'Groq transcription failed (' + r.status + ').'; return null; }
-      return String((await r.json()).text || '').trim() || null;
-    } catch (e) { st.lastError = 'Groq transcription could not be reached.'; return null; }
+      let device = 'wasm';
+      if (navigator.gpu && (await navigator.gpu.requestAdapter())) device = 'webgpu';
+      if (st.local !== 'loading') return;
+      const worker = new Worker('stt-worker.js', { type: 'module' });
+      st.worker = worker;
+      worker.onerror = (e) => {
+        if (st.worker === worker) failed(e.message || 'Worker stopped');
+      };
+      worker.onmessageerror = () => {
+        if (st.worker === worker) failed('Unreadable recognition response');
+      };
+      worker.onmessage = ({ data: m }) => {
+        if (st.worker !== worker) return;
+        if (m.type === 'progress') {
+          st.localProgress = m.p;
+          emit();
+        } else if (m.type === 'ready') {
+          st.local = 'ready';
+          st.localDevice = m.device;
+          settings.localStt = true;
+          try {
+            saveSettings();
+          } catch {}
+          emit();
+        } else if (m.type === 'text' || (m.type === 'error' && m.id != null))
+          settle(m.id, m.type === 'text' ? m.text : null);
+        else if (m.type === 'error') failed(m.message);
+      };
+      worker.postMessage({ type: 'init', device, cacheOnly: !!options.cacheOnly });
+    } catch (e) {
+      failed(String(e.message || e));
+    }
   }
-  async function transcribeCloud(pcm) {
-    if (groqKey()) { const t = await transcribeGroq(pcm); if (t) return t; }
+  // Register the reply before posting. Cancellation removes queued work and resolves
+  // this turn even if an already-running GPU inference cannot be interrupted.
+  async function transcribeLocal(pcm, op) {
+    if (st.local !== 'ready') return null;
+    const id = ++st.seq;
+    return new Promise((resolve) => {
+      st.waiters.set(id, { resolve, timer: setTimeout(() => settle(id, null), 30000) });
+      const cancel = () => {
+        settle(id, null);
+        st.worker?.postMessage({ type: 'drop', id });
+      };
+      op.cleanups.add(cancel);
+      const original = st.waiters.get(id).resolve;
+      st.waiters.get(id).resolve = (text) => {
+        op.cleanups.delete(cancel);
+        original(text);
+      };
+      try {
+        st.worker.postMessage({ type: 'run', id, pcm }, [pcm.buffer]);
+      } catch {
+        settle(id, null);
+      }
+    });
+  }
+  async function requestText(url, headers, body, op) {
+    const ctl = new AbortController(),
+      cancel = () => ctl.abort(),
+      timer = setTimeout(cancel, 12000);
+    op.cleanups.add(cancel);
     try {
-      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 12000);
-      const r = await fetch(CLOUD + '/stt', { method: 'POST', body: wav(pcm), signal: ctl.signal });
-      clearTimeout(to); if (!r.ok) { st.lastError = 'Cloud transcription failed (' + r.status + ').'; return null; }
+      const r = await fetch(url, { method: 'POST', headers, body, signal: ctl.signal });
+      if (!active(op)) return null;
+      if (!r.ok) throw Error('Recognition service returned ' + r.status);
       return String((await r.json()).text || '').trim() || null;
-    } catch (e) { st.lastError = 'Cloud transcription could not be reached.'; return null; }
-  }
-  // Whisper hallucinates stock phrases on silence/noise — drop them
-  const junk = (t) => !t || /^(\W*|you|thank you\.?|thanks for watching!?|\[.*\]|\(.*\))$/i.test(t.trim());
-
-  async function listenRecorded(ms, engine) {
-    const pcm = await capture(ms); if (!pcm) return null;
-    UI.status && UI.status('Hearing', 'listen');
-    let text = engine === 'groq' ? await transcribeCloud(pcm) : await transcribeLocal(pcm.slice());
-    if (!text && engine === 'local') text = await transcribeCloud(pcm);
-    return junk(text) ? null : [text];
-  }
-
-  return {
-    st, mode, initLocal, wav, capture,
-    onChange(f) { st.listeners.add(f); },
-    get available() { return settings.mic && mode() !== 'none'; },
-    get label() { return { native: 'Built-in speech recognition', local: 'On-device Whisper' + (st.local === 'ready' ? ' (' + st.localDevice + ')' : st.local === 'loading' ? ' (downloading ' + Math.round(st.localProgress) + '%)' : ''), groq: 'Whisper in the cloud', none: 'Not available' }[mode()]; },
-    async listen(ms = 7000) {
-      if (!settings.mic) return null;
-      const m = mode();
-      if (m === 'native') { const r = await listenNative(ms); if (r && r.retry) return listenRecorded(ms, mode()); return r; }
-      if (m === 'local' || m === 'groq') return listenRecorded(ms, m);
+    } catch (e) {
+      if (active(op)) {
+        st.lastError = String(e.message || 'Cloud recognition could not be reached.');
+        emit();
+      }
       return null;
+    } finally {
+      clearTimeout(timer);
+      op.cleanups.delete(cancel);
+    }
+  }
+  // Called only for an explicitly selected cloud recognizer. A personal Groq key
+  // is used there; the separate Murmur backup additionally requires noCloud === false.
+  async function transcribeCloud(pcm, op) {
+    if (!active(op)) return null;
+    if (groqKey()) {
+      const fd = new FormData();
+      fd.append('file', wav(pcm), 'answer.wav');
+      fd.append('model', 'whisper-large-v3-turbo');
+      fd.append('language', 'en');
+      fd.append('response_format', 'json');
+      const text = await requestText(
+        'https://api.groq.com/openai/v1/audio/transcriptions',
+        { Authorization: 'Bearer ' + groqKey() },
+        fd,
+        op
+      );
+      if (text || !active(op)) return text;
+    }
+    if (settings.noCloud !== false) return null;
+    return requestText(CLOUD + '/stt', {}, wav(pcm), op);
+  }
+  const junk = (t) =>
+    !t || /^(\W*|you|thank you\.?|thanks for watching!?|\[.*\]|\(.*\))$/i.test(t.trim());
+  async function listenRecorded(ms, engine, op) {
+    if (engine === 'groq' && !groqKey() && settings.noCloud !== false) {
+      st.lastError =
+        'Cloud recognition needs your chosen service connection. On-device mode keeps audio on this device.';
+      emit();
+      return null;
+    }
+    if (engine === 'local' && st.local !== 'ready') {
+      if (settings.localStt && st.local !== 'loading') initLocal();
+      st.lastError =
+        st.local === 'loading'
+          ? 'On-device recognition is preparing. Use the answer buttons, or wait for Audio settings to show Ready.'
+          : 'Download on-device recognition in Audio settings, or choose built-in recognition.';
+      emit();
+      return null;
+    }
+    const pcm = await capture(ms, null, op);
+    if (!pcm || !active(op)) return null;
+    phase(op, 'transcribing');
+    const text =
+      engine === 'groq' ? await transcribeCloud(pcm, op) : await transcribeLocal(pcm, op);
+    return active(op) && !junk(text) ? [text] : null;
+  }
+  /** Fully discard the recognizer for setup recovery; preserve no stale readiness. */
+  function reset() {
+    stop();
+    release();
+    for (const id of [...st.waiters.keys()]) settle(id, null);
+    st.worker?.terminate();
+    st.worker = null;
+    st.local = 'off';
+    st.localProgress = 0;
+    st.localDevice = null;
+    st.lastError = '';
+    st.nativeBroken = false;
+    emit();
+  }
+  return {
+    st,
+    mode,
+    initLocal,
+    wav,
+    capture,
+    stop,
+    release,
+    reset,
+    onChange(fn) {
+      st.listeners.add(fn);
+      return () => st.listeners.delete(fn);
     },
-    stop() { if (st.abort) st.abort(); },
-    release() { if (st.stream) { st.stream.getTracks().forEach(t => t.stop()); st.stream = null; } },
-    async permission() { try { if (!navigator.permissions) return 'unknown'; const p = await navigator.permissions.query({ name: 'microphone' }); return p.state; } catch (e) { return 'unknown'; } },
-    async request() { try { await stream(); return true; } catch (e) { st.lastError = e.name === 'NotAllowedError' ? 'Permission was refused.' : String(e.message || e.name); emit(); return false; } },
-    async devices() { try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch (e) { return []; } },
+    get available() {
+      return settings.mic && mode() !== 'none';
+    },
+    get label() {
+      return {
+        native: 'Built-in speech recognition',
+        local:
+          'On-device Whisper' +
+          (st.local === 'ready'
+            ? ' (' + st.localDevice + ')'
+            : st.local === 'loading'
+              ? ' (preparing)'
+              : ''),
+        groq: 'Whisper in the cloud',
+        none: 'Not available'
+      }[mode()];
+    },
+    /** One owner per answer window. A cancelled turn returns null and can never
+     * deliver a late transcript or clear the next turn's microphone state. */
+    async listen(ms = 15000, opts = {}) {
+      stop();
+      if (!settings.mic) return null;
+      const op = { cancelled: false, cleanups: new Set(), onState: opts.onState };
+      op.cancelPromise = new Promise((r) => (op.resolveCancel = r));
+      st.active = op;
+      st.abort = stop;
+      try {
+        const selected = mode();
+        let result;
+        if (selected === 'native') {
+          phase(op, 'opening');
+          result = await listenNative(ms, op);
+          if (result?.retry && active(op)) {
+            const fallback = mode();
+            result = fallback === 'native' ? null : await listenRecorded(ms, fallback, op);
+          }
+        } else if (selected === 'local' || selected === 'groq')
+          result = await listenRecorded(ms, selected, op);
+        return active(op) ? result : null;
+      } finally {
+        if (st.active === op) {
+          st.active = null;
+          st.abort = null;
+          st.listening = false;
+          st.level = 0;
+          emit();
+        }
+      }
+    },
+    async permission() {
+      try {
+        return (await navigator.permissions.query({ name: 'microphone' })).state;
+      } catch {
+        return 'unknown';
+      }
+    },
+    async request() {
+      try {
+        return !!(await stream());
+      } catch (e) {
+        st.lastError =
+          e.name === 'NotAllowedError' ? 'Permission was refused.' : String(e.message || e);
+        emit();
+        return false;
+      }
+    },
+    async devices() {
+      try {
+        return (await navigator.mediaDevices.enumerateDevices()).filter(
+          (d) => d.kind === 'audioinput'
+        );
+      } catch {
+        return [];
+      }
+    }
   };
 })();

@@ -63,6 +63,7 @@
     <p class="hint center">Start while parked. After that, everything is by voice or the big buttons.</p>
   </div>
 
+  <section class="block" id="adaptivePlan" aria-live="polite"></section>
   <section class="block" id="statsBlock"></section>
   <footer class="sc-foot"><a href="#" id="scLink"><svg class="sc-badge" viewBox="-6 -6 132 132" aria-hidden="true"><defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset=".55" stop-color="#ff7a1a"/><stop offset="1" stop-color="#e2531a"/></linearGradient><linearGradient id="hb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2f5e"/><stop offset="1" stop-color="#0d1833"/></linearGradient></defs><path d="M60 6L106 32V88L60 114L14 88V32Z" fill="url(#hb)" stroke="url(#hg)" stroke-width="4" stroke-linejoin="round"/><path d="M24 62H42L49 42L60 84L67 52L73 62H96" fill="none" stroke="url(#hg)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="62" r="4" fill="#e9edf6"/><circle cx="96" cy="62" r="4" fill="#e9edf6"/></svg><span>a <b>Signal</b><i>craft</i> app</span></a></footer>
 </main>
@@ -104,21 +105,29 @@
 
 <!-- ============ SETTINGS ============ -->
 <main id="settings" class="screen" hidden>
-  <header class="appbar"><h1>Settings</h1><button class="iconbtn" id="btnCloseSettings" aria-label="Close"></button></header>
+  <header class="appbar settings-header"><div><span class="eyebrow">MAKE IT YOURS</span><h1>Settings</h1><p class="hint">Your voice, your study rhythm.</p></div><button class="iconbtn" id="btnCloseSettings" aria-label="Close settings"></button></header>
 
   <section class="card form">
-    <h2 class="label">Voice</h2>
+    <div class="settings-section-title"><span class="settings-number">01</span><div><h2>Audio &amp; reading</h2><p>Natural speech and recognition, on this device.</p></div></div>
+    <div class="audio-pack-grid"><div class="audio-pack"><span class="audio-pack-icon" aria-hidden="true">◉</span><b>Natural voice</b><small>About 330 MB · Kokoro</small><span id="audioVoiceStatus">Not downloaded</span></div><div class="audio-pack"><span class="audio-pack-icon" aria-hidden="true">≋</span><b>Voice recognition</b><small>About 210 MB · Whisper</small><span id="audioRecognizerStatus">Not downloaded</span></div></div>
+    <progress id="audioPackProgress" class="audio-progress" max="100" value="0" hidden aria-label="Audio pack download progress"></progress>
+    <p class="hint audio-status" id="audioPackStatus" role="status" aria-live="polite">Download once on Wi-Fi. Models stay on this device.</p>
+    <button class="btn primary" id="btnAudioPacks">Download both &amp; apply</button>
+    <div class="audio-secondary-actions"><button class="btn quiet" id="btnAudioExisting">Use existing files</button><button class="btn quiet" id="btnRedownloadAudio">Re-download both</button></div>
+    <p class="hint">Both engines are required for study. About 550 MB total; device fallback may need more. Keep Murmur open during setup. Natural voice requires a WebGPU-compatible browser or device.</p>
+    <details class="help audio-advanced"><summary>Voice engine details &amp; individual download</summary>
     <div class="statusrow"><b id="voiceState">System voice</b><small id="voiceWhy"></small></div>
     <div class="meter" id="voiceMeter" hidden><i id="voiceMeterBar"></i></div>
     <button class="btn primary" id="btnVoice">Download the natural voice (about 330 MB, once)</button>
-    <p class="hint">A neural voice that runs on your phone, so it works offline and costs nothing. Download on Wi-Fi. It needs Chrome or the installed app (WebGPU); other browsers use the phone's own voice.</p>
+    <p class="hint">The required natural voice runs on your device after preparation. Download on Wi-Fi in a WebGPU-compatible browser or installed app.</p>
+    </details>
     <h2 class="label">Follow-along highlight</h2>
     <div class="seg" id="hlSeg"><button class="segbtn" data-hl="phrase">Phrase</button><button class="segbtn" data-hl="word">Word</button><button class="segbtn" data-hl="off">Off</button></div>
     <label>Speaking speed <output id="rateOut">1.0×</output><input type="range" id="rate" min="0.8" max="1.3" step="0.05" value="1"></label>
   </section>
 
   <section class="card form" id="micCard">
-    <h2 class="label">Microphone</h2>
+<div class="settings-section-title"><span class="settings-number">02</span><div><h2>Microphone &amp; listening</h2><p>Choose your input and check that you’re heard.</p></div></div>
     <div class="permrow"><span class="dot" id="permDot"></span><div class="statusrow"><b id="permState">Checking permission…</b><small id="permWhy"></small></div></div>
     <button class="btn primary" id="btnPerm">Allow the microphone</button>
     <details class="help" id="permHelp"><summary>How to fix a blocked microphone</summary><div id="permSteps"></div></details>
@@ -128,12 +137,12 @@
     <label>Recognition <select id="earMode">
       <option value="auto">Automatic (best available)</option>
       <option value="native">Built-in only (Chrome / installed app)</option>
-      <option value="local">On-device Whisper (no key, works everywhere)</option>
-      <option value="groq">Whisper in the cloud (built in, no key)</option>
+      <option value="local">On-device Whisper (offline after setup)</option>
+      <option value="groq">Cloud recognition (requires connection)</option>
     </select></label>
     <div class="statusrow"><b id="micState"></b><small id="micWhy"></small></div>
     <div class="meter" id="sttMeter" hidden><i id="sttMeterBar"></i></div>
-    <button class="btn" id="btnLocalStt">Download on-device recogniser (about 80 MB, once)</button>
+    <button class="btn" id="btnLocalStt">Download on-device recogniser (about 210 MB, once)</button>
     <label class="row"><input type="checkbox" id="micOn" checked> Listen for spoken answers</label>
     <label class="row"><input type="checkbox" id="optionsAloud" checked> Read multiple-choice options aloud</label>
     <div class="row gap"><button class="btn primary" id="btnTestVoice">Test: say “option two”</button><button class="btn" id="btnMeter">Watch the level</button></div>
@@ -141,34 +150,63 @@
   </section>
 
   <section class="card form">
-    <h2 class="label">AI chain</h2>
-    <p class="hint">Services are tried in this order; if one is slow or down, the next one carries on the same conversation. Any keys you add are used first, and Murmur's own free cloud is the backup, so it works with no keys at all. Keys stay on this phone.</p>
+<div class="settings-section-title"><span class="settings-number">03</span><div><h2>AI fallback order</h2><p>Five slots. One conversation.</p></div></div>
+    <p class="hint">Choose at least three different providers in any free/paid mix. Paid use requires API keys for three selected provider accounts. Murmur tries configured services in this order when another is unavailable. Each provider appears once; moving it clears its previous slot. A selected provider still needs its own working key.</p>
+    <p class="settings-note">These API-key connections use separate provider billing; a chat subscription does not supply an API key. Adding your key can incur charges under that provider’s plan. Keys stay on this device.</p>
     <div id="keyRows"></div>
     <button class="btn" id="btnTestAI">Test the chain</button>
     <div class="keystatus" id="aiOut"></div>
   </section>
 
   <section class="card form">
-    <h2 class="label">Sync with the vault</h2>
-    <p class="hint">Progress is always saved on this phone. A fine-grained GitHub token (this repository only, Contents: Read and write) also sends your results to the vault after each drive.</p>
-    <label>Repository <input type="text" id="ghRepo" placeholder="owner/repo"></label>
-    <label>Token <input type="password" id="ghToken" autocomplete="off" placeholder="github_pat_…"></label>
+<div class="settings-section-title"><span class="settings-number">04</span><div><h2>Shared learning</h2><p>Keep your study plan together across devices.</p></div></div>
+    <p class="hint">Connect the same private data repository in Murmur, the DIGI guide and Obsidian. Independent answers, guided attempts and review needs then travel together. The app verifies that the repository is private before syncing. Your existing phone history stays saved.</p>
+    <a class="btn workbench-link" href="https://digi-210-practice-studio.feverflame.chatgpt.site" target="_blank" rel="noopener">Open DIGI workbench <span aria-hidden="true">↗</span></a>
+    <p class="hint">Exact textbook questions, diagrams and guided practice. The private workbench may ask you to sign in.</p>
+    <label>Private data repository <input type="text" id="syncRepo" placeholder="owner/murmur-learning-data" autocomplete="off" spellcheck="false"></label>
+    <label>Private data token <input type="password" id="syncToken" autocomplete="off" placeholder="Fine-grained token for that repository"></label>
+    <label class="row"><input type="checkbox" id="syncEnabled"> Enable shared private sync</label>
+    <p class="hint">The token needs Contents: Read and write for this private repository only. Tokens and voice settings stay on this device; they are never included in the learning file.</p>
     <div class="row gap"><button class="btn" id="btnSync">Sync now</button><button class="btn" id="btnRefresh">Check for new material</button></div>
+    <p class="hint" id="sharedSyncStatus" role="status">Saved on this phone · private sync is not connected</p>
     <p class="hint" id="syncOut"></p>
+    <details class="help">
+      <summary>Import older Murmur history</summary>
+      <p class="hint">This reads your older progress.json without changing it. Old totals remain available, but are not treated as new independently graded answers.</p>
+      <label>Older repository <input type="text" id="ghRepo" placeholder="owner/repo"></label>
+      <label>Older token <input type="password" id="ghToken" autocomplete="off" placeholder="Existing GitHub token"></label>
+      <button class="btn" id="btnImportLegacy">Import old history</button>
+      <p class="hint" id="legacySyncOut"></p>
+    </details>
   </section>
 
   <section class="card form">
-    <h2 class="label">Data</h2>
-    <div class="row gap"><button class="btn" id="btnExport">Copy progress</button><button class="btn danger" id="btnReset">Reset progress</button></div>
+<div class="settings-section-title"><span class="settings-number">05</span><div><h2>Your data</h2><p>Keep a copy, or start fresh on this phone.</p></div></div>
+    <div class="row gap"><button class="btn" id="btnExport">Copy progress</button><button class="btn danger" id="btnReset">Reset phone history</button></div>
     <p class="hint" id="dataOut"></p>
     <p class="hint">Version <span id="ver"></span></p>
   </section>
   <section class="card sc-about">
     <svg class="sc-badge" viewBox="-6 -6 132 132" aria-hidden="true"><defs><linearGradient id="hg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset=".55" stop-color="#ff7a1a"/><stop offset="1" stop-color="#e2531a"/></linearGradient><linearGradient id="hb2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2f5e"/><stop offset="1" stop-color="#0d1833"/></linearGradient></defs><path d="M60 6L106 32V88L60 114L14 88V32Z" fill="url(#hb2)" stroke="url(#hg2)" stroke-width="4" stroke-linejoin="round"/><path d="M24 62H42L49 42L60 84L67 52L73 62H96" fill="none" stroke="url(#hg2)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="62" r="4" fill="#e9edf6"/><circle cx="96" cy="62" r="4" fill="#e9edf6"/></svg>
     <div><h2 class="sc-word"><b>Signal</b><i>craft</i></h2><p class="sc-tagline">SOFTWARE THAT SPEAKS ELECTRONICS</p>
-    <p class="hint">Murmur is a Signalcraft app by jrshaack, a sibling of the ESP Toolkit. Today it studies your Pandora vault; the plan is a Signalcraft study platform where anyone names a subject and textbook and gets a study system built for them.</p></div>
+    <p class="hint">Murmur connects your phone, DIGI workbench and Obsidian study hub. A Signalcraft app by jrshaack, and a sibling of the ESP Toolkit.</p></div>
   </section>
 </main>
+
+<dialog id="paidConfirmDialog" class="paid-confirm-dialog" aria-labelledby="paidConfirmTitle" aria-describedby="paidConfirmMessage paidConfirmNote">
+  <span class="eyebrow">YOUR API ACCOUNT</span><h2 id="paidConfirmTitle">Enable optional paid APIs?</h2><p id="paidConfirmMessage"></p><p id="paidConfirmNote" class="settings-note">This is optional. Paid providers are not necessary to use Murmur. API-key connections use separate provider billing; a chat subscription does not supply an API key.</p><div class="paid-confirm-actions"><button id="paidConfirmNo" class="btn" autofocus>Cancel</button><button id="paidConfirmYes" class="btn primary">Enable paid APIs</button></div>
+</dialog>
+
+<dialog id="audioSetupDialog" class="audio-setup-dialog" aria-labelledby="audioSetupTitle" aria-describedby="audioSetupIntro">
+  <div class="audio-setup-heading"><img src="icons/icon-192.png" alt="" width="56" height="56"><span class="eyebrow">WELCOME TO MURMUR</span><h2 id="audioSetupTitle">Prepare your<br>study voice.</h2><p id="audioSetupIntro">Confirm the two audio downloads before you begin. Keeping these packs separate makes the initial app small, while giving you natural speech and on-device recognition for study.</p></div>
+  <div class="audio-pack-grid"><div class="audio-pack"><b>Natural voice</b><small>About 330 MB</small><span id="audioDialogVoice">Not downloaded</span></div><div class="audio-pack"><b>Voice recognition</b><small>About 210 MB</small><span id="audioDialogRecognizer">Not downloaded</span></div></div>
+  <p class="hint">Both packs are required · about 550 MB total; device fallback may need more. Download once on Wi-Fi and keep Murmur open. Natural voice requires a WebGPU-compatible browser or device. Study unlocks only when both engines report ready.</p>
+  <progress id="audioDialogProgress" class="audio-progress" max="100" value="0" hidden aria-label="Audio setup progress"></progress>
+  <p id="audioDialogStatus" class="hint audio-status" role="status" aria-live="polite"></p>
+  <div class="audio-setup-actions"><button id="audioDownloadBoth" class="btn primary">Confirm &amp; download both · about 550 MB</button><button id="audioFindFiles" class="btn">Find existing files</button></div>
+  <details id="audioRecovery" class="help audio-recovery"><summary>Use audio files already on this device</summary><p class="hint">Choose the folder or files you previously downloaded, even if they were moved. Only recognized, verified model files are imported. Nothing else is searched or uploaded.</p><label>Which pack? <select id="audioModelHint"><option value="">Detect automatically</option><option value="Kokoro-82M-v1.0-ONNX">Natural voice · Kokoro</option><option value="whisper-base.en">Recognition · Whisper base</option><option value="whisper-tiny.en">Recognition · Whisper tiny fallback</option></select></label><div class="row gap"><button id="audioChooseFolder" class="btn">Choose folder</button><button id="audioChooseFiles" class="btn">Choose files</button></div><input id="audioFolderInput" type="file" webkitdirectory multiple hidden><input id="audioFilesInput" type="file" multiple hidden><p id="audioRecoveryStatus" class="hint" role="status">Existing files are checked locally. Missing files require your confirmation before download.</p></details>
+  <p class="audio-setup-foot">Already downloaded? Saved packs are checked and reused. If setup is interrupted, retry keeps the completed files.</p>
+</dialog>
 
 <audio id="silence" loop preload="auto"></audio>
 <script src="parse.js"></script>
@@ -176,6 +214,11 @@
 <script src="ear.js"></script>
 <script src="ai.js"></script>
 <script src="speechtext.js"></script>
+<script src="murmur-sync.js"></script>
+<script src="murmur-adaptive.js"></script>
+<script src="phone-study.js"></script>
 <script src="app.js"></script>
+<script src="audio-files.js"></script>
+<script src="voice-setup.js"></script>
 </body>
 </html>
