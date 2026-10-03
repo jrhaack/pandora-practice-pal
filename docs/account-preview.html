@@ -2050,7 +2050,12 @@ window.MURMUR_ACCOUNT_CONFIG = Object.freeze({
 <script>
 'use strict';
 const previewConfig = { ...window.MURMUR_ACCOUNT_CONFIG, enabled: true, appCheckEnforced: true, githubEnabled: false, sdkUrl: "firebase-adapter.5a70f02723b5e07c.js" };
-const accountPreview = MurmurAccountRuntime.create({ appId: 'account-preview', storageName: 'murmur-account-preview-v1', config: previewConfig });
+// This preview has no host study state to save or restore. Keep both lifecycle
+// hooks explicit so the production core's mandatory isolation contract applies.
+const accountPreview = MurmurAccountRuntime.create({
+  appId: 'account-preview', storageName: 'murmur-account-preview-v1', config: previewConfig,
+  async beforeScopeChange() {}, async onScopeChange() {}
+});
 accountPreview.ready.then(() => accountPreview.show(document.getElementById('account'))).catch(() => {
   document.getElementById('account').textContent = 'Account storage is unavailable in this browser. Your existing study apps are unchanged.';
 });
